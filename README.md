@@ -9,16 +9,26 @@ Each has its own API, answer shape and way of reporting confidence. snapjudge pu
 ```python
 import snapjudge as sj
 
-sj.configure(
-    engine
-)  # any snapjudge.Engine; bundled adapters for Jev and LLMs are coming (#2)
+sj.configure(sj.engines.load("jev"))  # needs TYPESAFE_API_KEY; see "Engines" below
 
 verdict = sj.yesno(
     "Is this shell command hard to undo?",
     context={"command": "git push --force origin main", "task": "fix typo in README"},
 )
+verdict.value  # "yes"
 verdict.p  # 0.97
 verdict.engine  # "jev"
+```
+
+## Engines
+
+```python
+# TypeSafe Jev (TYPESAFE_API_KEY)
+jev = sj.engines.load("jev")
+# Any LiteLLM model: pip install "snapjudge[llm]"
+flash = sj.engines.load("llm:gemini/gemini-2.0-flash-lite")
+# Ask Jev first, escalate low-confidence answers to the LLM
+sj.configure(sj.Cascade([jev, flash]))
 ```
 
 Local engines: `sj.engines.load("laya")` runs Laya in process (`pip install "snapjudge[laya]"`; on a CPU-only Linux box install the CPU PyTorch wheel first with `pip install torch --index-url https://download.pytorch.org/whl/cpu`, or pip pulls the multi-GB CUDA build). `sj.engines.load("agentjev")` talks to a local AgentJev server.

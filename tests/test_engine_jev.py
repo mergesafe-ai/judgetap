@@ -115,3 +115,35 @@ def test_load_specs(monkeypatch):
         load("nope")
     with pytest.raises(sj.SnapjudgeError):
         load("llm")
+
+
+def test_mapping_context_is_sent_as_plain_json():
+    from types import MappingProxyType
+
+    t = Recorder(ok({"answers": {"q0": {"type": "noul", "noul": 0.5}}}))
+    sj.yesno(
+        "q",
+        MappingProxyType({"x": 1, "when": object}),
+        engine=JevEngine(api_key="k", transport=t),
+    )
+    state = t.requests[0][2]["state"]
+    assert state["x"] == 1 and isinstance(state["when"], str)
+
+
+def test_plain_context_keeps_json_values_and_stringifies_the_rest():
+    from snapjudge.engine import plain_context
+
+    ctx = {"n": 1, "ok": True, "nested": {"xs": [1, "a", None]}, "obj": object}
+    out = plain_context(ctx)
+    assert out["nested"] == {"xs": [1, "a", None]} and out["n"] == 1
+    assert isinstance(out["obj"], str)
+
+
+def test_plain_context_stringifies_non_finite_floats():
+    import json as _json
+
+    from snapjudge.engine import plain_context
+
+    out = plain_context({"a": float("nan"), "b": [float("inf")]})
+    _json.dumps(out, allow_nan=False)  # strict JSON
+    assert out == {"a": "nan", "b": ["inf"]}
