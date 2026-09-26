@@ -115,3 +115,16 @@ def test_load_specs(monkeypatch):
         load("nope")
     with pytest.raises(sj.SnapjudgeError):
         load("llm")
+
+
+def test_mapping_context_is_sent_as_plain_json():
+    from types import MappingProxyType
+
+    t = Recorder(ok({"answers": {"q0": {"type": "noul", "noul": 0.5}}}))
+    sj.yesno(
+        "q",
+        MappingProxyType({"x": 1, "when": object}),
+        engine=JevEngine(api_key="k", transport=t),
+    )
+    state = t.requests[0][2]["state"]
+    assert state["x"] == 1 and isinstance(state["when"], str)

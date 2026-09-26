@@ -49,3 +49,11 @@ def test_level_and_p_yes_only_on_their_kinds():
 def test_wrong_kinds_and_types_raise_invalid_question(build):
     with pytest.raises(InvalidQuestionError):
         build()
+
+
+@pytest.mark.parametrize("bad", [None, 3, "ab"])
+def test_non_list_options_raise_invalid_question(bad):
+    with pytest.raises(InvalidQuestionError):
+        Question.choice("q", bad)
+    with pytest.raises(InvalidQuestionError):
+        Question.score("q", bad)

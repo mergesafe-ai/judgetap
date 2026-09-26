@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -9,6 +10,16 @@ from typing import Any, Protocol, runtime_checkable
 from snapjudge.types import Question
 
 Context = str | Mapping[str, Any] | None
+
+
+def plain_context(context: Context) -> str | dict[str, Any]:
+    """Context as something json.dumps accepts: str, or a plain dict whose
+    nested values fall back to str()."""
+    if context is None:
+        return ""
+    if isinstance(context, str):
+        return context
+    return json.loads(json.dumps(dict(context), default=str))
 
 
 @dataclass(frozen=True)

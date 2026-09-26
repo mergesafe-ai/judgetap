@@ -9,14 +9,18 @@ answering, and the question moves on to the next engine.
 from __future__ import annotations
 
 import asyncio
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Literal
 
 from snapjudge.api import validate_answer
 from snapjudge.engine import Context, Engine, RawAnswer
 from snapjudge.errors import SnapjudgeError
 from snapjudge.types import Question
+
+CONFIG_FILE = "snapjudge.toml"
 
 
 class CascadeExhaustedError(SnapjudgeError):
@@ -115,10 +119,9 @@ class Cascade:
     def _finish(self, question: Question, attempts: Sequence[Attempt]) -> RawAnswer:
         hops = _hops(attempts)
         answered = [a for a in attempts if a.answer is not None]
-        costs = [a.answer.cost_usd for a in answered if a.answer.cost_usd is not None]
-        spent = (
-            sum(costs) if costs else None
-        )  # everything paid for, not just the winner
+        costs = [a.answer.cost_usd for a in answered]
+        # Everything paid for, not just the winner; unknown if any part is unknown.
+        spent = sum(costs) if costs and None not in costs else None
         if self._confident(attempts):
             return _as_result(attempts[-1], hops, spent)
         if callable(self.on_exhausted):
@@ -149,3 +152,30 @@ def _as_result(
     # A nested cascade already names the engine that really answered.
     engine = attempt.answer.engine or attempt.engine
     return replace(attempt.answer, engine=engine, hops=hops, cost_usd=spent)
+
+
+def from_config(path: str | Path | None = None) -> Cascade:
+    """Build a cascade from the [cascade] table of snapjudge.toml.
+
+    [cascade]
+    order = ["jev", "llm:gemini/gemini-2.0-flash-lite"]
+    escalate_below = 0.8
+    on_exhausted = "raise"        # or "return_last"
+    """
+    from snapjudge.engines import load
+
+    path = Path(path or CONFIG_FILE)
+    with path.open("rb") as fh:
+        table = tomllib.load(fh).get("cascade")
+    if not table or not table.get("order"):
+        raise SnapjudgeError(f"{path} has no [cascade] table with an order list")
+    on_exhausted = table.get("on_exhausted", "raise")
+    if on_exhausted not in ("raise", "return_last"):
+        raise SnapjudgeError(
+            "on_exhausted in a config file must be 'raise' or 'return_last'"
+        )
+    return Cascade(
+        engines=[load(spec) for spec in table["order"]],
+        escalate_below=float(table.get("escalate_below", 0.8)),
+        on_exhausted=on_exhausted,
+    )

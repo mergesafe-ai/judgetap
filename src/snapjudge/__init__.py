@@ -1,5 +1,6 @@
 """snapjudge: fast typed decisions across Jev-style engines."""
 
+from snapjudge import engines
 from snapjudge.api import (
     abatch,
     achoice,
@@ -42,6 +43,7 @@ __all__ = [
     "batch",
     "choice",
     "configure",
+    "engines",
     "score",
     "yesno",
 ]
