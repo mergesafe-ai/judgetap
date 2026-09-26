@@ -15,6 +15,14 @@ MAX_SCORE_LEVELS = 10
 YES, NO = "yes", "no"
 
 
+def _as_tuple(values: object, what: str) -> tuple:
+    # Lists and tuples only: a string would split into characters, and a set
+    # has no order, which matters for score levels and for tie-breaking.
+    if not isinstance(values, list | tuple):
+        raise InvalidQuestionError(f"{what} must be a list of strings, got {values!r}")
+    return tuple(values)
+
+
 @dataclass(frozen=True)
 class Question:
     """One typed question. Build it with `choice`, `score` or `yesno`."""
@@ -56,12 +64,12 @@ class Question:
 
     @classmethod
     def choice(cls, text: str, options: list[str] | tuple[str, ...]) -> Question:
-        return cls("choice", text, tuple(options))
+        return cls("choice", text, _as_tuple(options, "options"))
 
     @classmethod
     def score(cls, text: str, levels: list[str] | tuple[str, ...]) -> Question:
         """Levels are ordered from lowest to highest."""
-        return cls("score", text, tuple(levels))
+        return cls("score", text, _as_tuple(levels, "levels"))
 
     @classmethod
     def yesno(cls, text: str) -> Question:
@@ -74,7 +82,7 @@ class Decision:
 
     `value` is always one of the question's options. `p` is the probability
     of `value` after snapjudge renormalises the engine's distribution to sum
-    to exactly 1; for a yes/no question use `p_yes` to read the probability
+    to 1 (within float rounding); for a yes/no question use `p_yes` to read the probability
     of "yes" regardless of which side won.
     """
 

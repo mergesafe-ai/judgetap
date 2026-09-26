@@ -11,7 +11,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer
+from snapjudge.engine import Context, RawAnswer, plain_context
 from snapjudge.errors import SnapjudgeError
 from snapjudge.types import Question
 
@@ -28,7 +28,8 @@ class LLMError(SnapjudgeError):
 
 
 def _prompt(questions: Sequence[Question], context: Context) -> str:
-    state = context if isinstance(context, str) else json.dumps(context, default=str)
+    state = plain_context(context)
+    state = state if isinstance(state, str) else json.dumps(state)
     lines = [f"State:\n{state}\n", "Questions:"]
     for i, q in enumerate(questions):
         order = " (ordered lowest to highest)" if q.kind == "score" else ""

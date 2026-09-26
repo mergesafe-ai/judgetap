@@ -167,3 +167,65 @@ def test_nested_cascade_keeps_inner_engine_and_hops():
         True,
         ["cheap", "strong"],
     )
+
+
+def test_cost_is_unknown_when_any_answering_engine_is_unpriced():
+    d = sj.yesno(
+        "q", engine=sj.Cascade([eng("free-unknown", 0.5), priced("b", 0.9, 0.02)])
+    )
+    assert d.cost_usd is None
+
+
+def test_from_config_builds_cascade(tmp_path):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text(
+        '[cascade]\norder = ["jev", "llm:openai/x"]\nescalate_below = 0.7\non_exhausted = "return_last"\n'
+    )
+    c = from_config(cfg)
+    assert [e.name for e in c.engines] == ["jev", "llm:openai/x"]
+    assert (c.escalate_below, c.on_exhausted) == (0.7, "return_last")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "[cascade]\norder = []\n",
+        '[cascade]\norder = ["jev"]\non_exhausted = "shrug"\n',
+    ],
+)
+def test_from_config_rejects_bad_files(tmp_path, body):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text(body)
+    with pytest.raises(sj.SnapjudgeError):
+        from_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '[cascade]\norder = ["jev"]\nescalate_below = "high"\n',
+        '[cascade]\norder = "jev"\n',
+        '[cascade]\norder = ["jev"]\nescalate_below = true\n',
+    ],
+)
+def test_from_config_type_errors_name_the_setting(tmp_path, body):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text(body)
+    with pytest.raises(sj.SnapjudgeError, match="cascade\\."):
+        from_config(cfg)
+
+
+def test_from_config_scalar_cascade_is_a_config_error(tmp_path):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text('cascade = "jev"\n')
+    with pytest.raises(sj.SnapjudgeError):
+        from_config(cfg)

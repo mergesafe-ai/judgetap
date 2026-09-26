@@ -123,22 +123,22 @@ async def abatch(
 
 def choice(
     text: str,
-    options: Sequence[str],
+    options: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
 ) -> Decision:
-    return batch([Question.choice(text, tuple(options))], context, engine=engine)[0]
+    return batch([Question.choice(text, options)], context, engine=engine)[0]
 
 
 def score(
     text: str,
-    levels: Sequence[str],
+    levels: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
 ) -> Decision:
-    return batch([Question.score(text, tuple(levels))], context, engine=engine)[0]
+    return batch([Question.score(text, levels)], context, engine=engine)[0]
 
 
 def yesno(
@@ -149,26 +149,22 @@ def yesno(
 
 async def achoice(
     text: str,
-    options: Sequence[str],
+    options: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
 ) -> Decision:
-    return (
-        await abatch([Question.choice(text, tuple(options))], context, engine=engine)
-    )[0]
+    return (await abatch([Question.choice(text, options)], context, engine=engine))[0]
 
 
 async def ascore(
     text: str,
-    levels: Sequence[str],
+    levels: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
 ) -> Decision:
-    return (
-        await abatch([Question.score(text, tuple(levels))], context, engine=engine)
-    )[0]
+    return (await abatch([Question.score(text, levels)], context, engine=engine))[0]
 
 
 async def ayesno(

@@ -49,3 +49,23 @@ def test_level_and_p_yes_only_on_their_kinds():
 def test_wrong_kinds_and_types_raise_invalid_question(build):
     with pytest.raises(InvalidQuestionError):
         build()
+
+
+@pytest.mark.parametrize("bad", [None, 3, "ab"])
+def test_non_list_options_raise_invalid_question(bad):
+    with pytest.raises(InvalidQuestionError):
+        Question.choice("q", bad)
+    with pytest.raises(InvalidQuestionError):
+        Question.score("q", bad)
+
+
+@pytest.mark.parametrize("bad", ["ab", {"low", "high"}, (o for o in "ab")])
+def test_public_api_rejects_strings_sets_and_generators(bad):
+    import snapjudge as sj
+    from snapjudge.testing import StaticEngine
+
+    engine = StaticEngine(lambda q, c: {o: 1 / len(q.options) for o in q.options})
+    with pytest.raises(InvalidQuestionError):
+        sj.choice("q", bad, engine=engine)
+    with pytest.raises(InvalidQuestionError):
+        sj.score("q", bad, engine=engine)

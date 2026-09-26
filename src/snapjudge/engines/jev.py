@@ -11,7 +11,7 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer
+from snapjudge.engine import Context, RawAnswer, plain_context
 from snapjudge.errors import SnapjudgeError
 from snapjudge.types import YES, Question
 
@@ -91,7 +91,7 @@ class JevEngine:
         body = json.dumps(
             {
                 "model": self.model,
-                "state": context if context is not None else "",
+                "state": plain_context(context),
                 "questions": {
                     i: _question_payload(q) for i, q in zip(ids, questions, strict=True)
                 },
