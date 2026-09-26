@@ -52,7 +52,7 @@ def _guard_test(args) -> int:
             "cwd": str(Path.cwd()),
         }
         out = io.StringIO()
-        run(io.StringIO(json.dumps(payload)), out)
+        run(io.StringIO(json.dumps(payload)), out, record=False)
         result = json.loads(out.getvalue()) if out.getvalue() else {}
         decision = result.get("hookSpecificOutput", {}).get(
             "permissionDecision", "allow"
@@ -70,25 +70,33 @@ def _guard_stats(args) -> int:
     if not path.exists():
         print(f"No guard log yet at {path}")
         return 0
-    records = [
-        json.loads(line) for line in path.read_text().splitlines() if line.strip()
-    ]
-    outcomes = Counter(r["outcome"] for r in records)
-    layers = Counter(r["layer"] for r in records)
-    judged = [r for r in records if r["layer"] == "judge" and not r.get("error")]
-    cost = sum(r["cost_usd"] or 0 for r in records)
-    print(f"{len(records)} guarded calls  ({path})")
+    outcomes: Counter[str] = Counter()
+    layers: Counter[str] = Counter()
+    latencies: list[float] = []
+    total = errors = 0
+    cost = 0.0
+    with path.open() as fh:  # streamed: the log grows without bound
+        for line in fh:
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            total += 1
+            outcomes[r["outcome"]] += 1
+            layers[r["layer"]] += 1
+            cost += r.get("cost_usd") or 0
+            errors += bool(r.get("error"))
+            if r["layer"] == "judge" and not r.get("error"):
+                latencies.append(r["latency_ms"])
+    print(f"{total} guarded calls  ({path})")
     print("outcomes: " + ", ".join(f"{k} {v}" for k, v in outcomes.most_common()))
     print("layers:   " + ", ".join(f"{k} {v}" for k, v in layers.most_common()))
-    if records:
-        print(f"holds per 1,000 calls: {1000 * outcomes['hold'] / len(records):.1f}")
-    if judged:
-        lat = sorted(r["latency_ms"] for r in judged)
-        print(
-            f"judge latency p50 {lat[len(lat) // 2]:.0f} ms, p95 {lat[int(len(lat) * 0.95)]:.0f} ms"
-        )
+    if total:
+        print(f"holds per 1,000 calls: {1000 * outcomes['hold'] / total:.1f}")
+    if latencies:
+        latencies.sort()
+        p50, p95 = latencies[len(latencies) // 2], latencies[int(len(latencies) * 0.95)]
+        print(f"judge latency p50 {p50:.0f} ms, p95 {p95:.0f} ms")
     print(f"engine cost: ${cost:.4f}")
-    errors = sum(1 for r in records if r.get("error"))
     if errors:
         print(f"judge errors: {errors} (ran rules only)")
     return 0

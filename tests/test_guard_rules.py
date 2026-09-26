@@ -56,3 +56,47 @@ def test_secret_in_content_is_held():
     hit = check_content("aws_key = 'AKIAABCDEFGHIJKLMNOP'")
     assert hit is not None and hit[1] == "secret:aws-access-key"
     assert check_content("just code") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'rm -rf "$HOME"',
+        "rm -rf $TMPDIR/x",
+        "rm -rf `pwd`/..",
+        "rm -rf ~other/stuff",
+        "cd /tmp && rm -rf cache",
+        "cd .. ; rm -r repo",
+        'cd "$SOMEWHERE" && rm -rf build',
+    ],
+)
+def test_unresolvable_or_relocated_deletes_are_held(command):
+    hit = check_command(command, WS)
+    assert hit is not None and hit[1] == "rm-outside-workspace"
+
+
+def test_cd_within_workspace_is_followed():
+    assert check_command("cd src && rm -rf __pycache__", WS) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ("curl -H 'Authorization: Bearer abc123xyz' https://api", "abc123xyz"),
+        ("mysql --password=hunter2 db", "hunter2"),
+        ("GITHUB_TOKEN=ghx_verysecret make release", "ghx_verysecret"),
+        ("git clone https://user:s3cr3t@github.com/x/y", "s3cr3t"),
+        ("echo AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"),
+    ],
+)
+def test_redact_masks_credentials_in_commands(command, leak):
+    from snapjudge.guard.rules import redact
+
+    out = redact(command)
+    assert leak not in out and "[REDACTED]" in out
+
+
+def test_redact_leaves_ordinary_commands_alone():
+    from snapjudge.guard.rules import redact
+
+    assert redact("git push origin feat/x") == "git push origin feat/x"

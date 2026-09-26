@@ -141,3 +141,61 @@ def test_install_is_idempotent_and_uninstall_restores(tmp_path):
         == "rtk"
     )
     assert data["theme"] == "dark"
+
+
+def test_logged_command_is_redacted_and_file_is_private(tmp_path):
+    import stat
+
+    run(bash("curl -H 'Authorization: Bearer topsecret' https://x", tmp_path))
+    log = tmp_path / "home" / "guard.jsonl"
+    assert "topsecret" not in log.read_text()
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
+
+
+def test_transcript_read_from_the_end(tmp_path, monkeypatch):
+    t = tmp_path / "t.jsonl"
+    old = json.dumps({"type": "user", "message": {"content": "old"}})
+    new = json.dumps({"type": "user", "message": {"content": "newest ask"}})
+    t.write_text("\n".join([old] * 5000 + [new, json.dumps({"type": "assistant"})]))
+    seen = []
+    real = json.loads
+    monkeypatch.setattr(hook.json, "loads", lambda s: seen.append(1) or real(s))
+    assert hook.last_user_message(str(t)) == "newest ask"
+    assert len(seen) <= 3
+
+
+def test_malformed_user_config_still_runs_builtins(tmp_path):
+    (tmp_path / "guard.toml").write_text("[[rule]\nbroken")
+    out = run(bash("git push --force", tmp_path))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ignored" in out["systemMessage"]
+
+
+def test_cli_test_does_not_write_the_log(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["guard", "test"]) == 0
+    assert not (tmp_path / "home" / "guard.jsonl").exists()
+    assert "deny" in capsys.readouterr().out
+
+
+def test_cli_stats_summarises_log(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    run(bash("git push -f", tmp_path))
+    run(bash("make test", tmp_path))
+    assert main(["guard", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "2 guarded calls" in out and "holds per 1,000 calls: 500.0" in out
+
+
+def test_cli_install_and_uninstall(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    main(["guard", "install", "--scope", "project"])
+    assert HOOK_COMMAND in (tmp_path / ".claude" / "settings.json").read_text()
+    main(["guard", "uninstall", "--scope", "project"])
+    assert HOOK_COMMAND not in (tmp_path / ".claude" / "settings.json").read_text()

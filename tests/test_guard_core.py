@@ -112,3 +112,25 @@ def test_project_rules_found_walking_up_to_repo_root(tmp_path):
     sub = tmp_path / "src" / "pkg"
     sub.mkdir(parents=True)
     assert project_rules(sub) == "use worktrees"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git branch -D feature",
+        "git remote remove origin",
+        "git tag -d v1",
+        "find . -delete",
+    ],
+)
+def test_mutating_listing_commands_are_judged(command):
+    engine = judge()
+    v = check(act(command), engine)
+    assert v.layer == "judge" and len(engine.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "command", ["git branch", "git branch -a", "git remote -v", "git tag -l"]
+)
+def test_listing_commands_skip_the_judge(command):
+    assert check(act(command), judge()).layer == "skip"

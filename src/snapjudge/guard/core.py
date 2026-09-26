@@ -24,8 +24,13 @@ MAX_RULES_CHARS = 4_000
 
 # Shell commands that only read. Judging them costs latency for nothing.
 READ_ONLY = re.compile(
-    r"^\s*(ls|cat|head|tail|wc|grep|rg|find|pwd|echo|which|stat|file|diff|tree|"
-    r"git\s+(status|log|diff|show|branch|remote|fetch|blame|rev-parse))\b"
+    r"^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|stat|file|diff|tree|"
+    r"git\s+(status|log|diff|show|blame|rev-parse))\b"
+)
+# git subcommands that are read-only only when given no action flags.
+GIT_LISTING = re.compile(
+    r"^\s*git\s+(branch(\s+(-a|-r|-v|-vv|--list|--all|--remotes|--show-current))*"
+    r"|remote(\s+-v)?|tag(\s+(-l|--list))?)\s*$"
 )
 CHAINING = re.compile(r"[;&|>`]|\$\(")
 
@@ -123,7 +128,7 @@ def check(
         return Verdict(outcome, "rules", reason, rule=name)
     if (
         action.command
-        and READ_ONLY.match(action.command)
+        and (READ_ONLY.match(action.command) or GIT_LISTING.match(action.command))
         and not CHAINING.search(action.command)
     ):
         return Verdict("allow", "skip", "read-only command")

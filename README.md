@@ -27,7 +27,7 @@ verdict.engine  # "jev"
 
 ## snapjudge guard
 
-A pre-action hook for Claude Code, Cursor and Codex. Every command, file write and edit is checked before it runs: hard rules for the obvious (`rm -rf /`, force-push to `main`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
+A pre-action hook for Claude Code (Cursor and Codex next, #6). Every command, file write and edit is checked before it runs: hard rules for the obvious (`rm -rf /`, force-push to `main`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
 
 ## Status
 

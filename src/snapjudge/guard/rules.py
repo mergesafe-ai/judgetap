@@ -94,34 +94,71 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def _rm_targets_outside(command: str, workspace: Path) -> str | None:
-    """Return the first path a recursive rm would delete outside the workspace."""
+SEPARATORS = frozenset({";", "&&", "||", "|", "&", "\n"})
+# Anything the shell rewrites before rm sees it: we cannot know the real path.
+UNRESOLVABLE = re.compile(r"[$`]|^~[^/]")
+
+
+def _commands(command: str) -> list[list[str]] | None:
+    """Split a shell line into simple commands; None if it cannot be parsed."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = list(lexer)
     except ValueError:
         return None
-    for i, tok in enumerate(tokens):
-        if Path(tok).name != "rm":
+    commands: list[list[str]] = [[]]
+    for tok in tokens:
+        if tok in SEPARATORS:
+            commands.append([])
+        else:
+            commands[-1].append(tok)
+    return [c for c in commands if c]
+
+
+def _resolve(arg: str, cwd: Path | None) -> Path | None:
+    """Resolve a path argument, or None when the shell would rewrite it."""
+    if UNRESOLVABLE.search(arg) or cwd is None:
+        return None
+    target = Path(arg).expanduser()
+    target = target if target.is_absolute() else cwd / target
+    try:
+        return target.resolve(strict=False)
+    except OSError:
+        return None
+
+
+def _rm_targets_outside(command: str, workspace: Path) -> str | None:
+    """Return the first recursive-rm target outside the workspace, or one whose
+    location can't be established (a variable, or a relative path after a cd we
+    couldn't follow). Tracks `cd` across the line."""
+    commands = _commands(command)
+    if commands is None:
+        return None
+    cwd: Path | None = workspace
+    for argv in commands:
+        prog = Path(argv[0]).name
+        if prog in ("cd", "pushd"):
+            dest = argv[1] if len(argv) > 1 else "~"
+            cwd = _resolve(dest, cwd)
             continue
-        args = tokens[i + 1 :]
-        flags = "".join(
+        if prog != "rm":
+            continue
+        args = argv[1:]
+        short = "".join(
             a[1:] for a in args if a.startswith("-") and not a.startswith("--")
         )
-        long_flags = {a for a in args if a.startswith("--")}
-        if not ("r" in flags.lower() or "--recursive" in long_flags):
+        if not ("r" in short.lower() or "--recursive" in args):
             continue
         for arg in args:
-            if arg.startswith("-") or arg in {";", "&&", "||", "|"}:
-                if arg in {";", "&&", "||", "|"}:
-                    break
+            if arg.startswith("-"):
                 continue
-            target = Path(arg).expanduser()
-            target = (workspace / target) if not target.is_absolute() else target
-            try:
-                resolved = target.resolve(strict=False)
-            except OSError:
-                return arg
-            if resolved == workspace or not resolved.is_relative_to(workspace):
+            resolved = _resolve(arg, cwd)
+            if (
+                resolved is None
+                or resolved == workspace
+                or not resolved.is_relative_to(workspace)
+            ):
                 return arg
     return None
 
@@ -151,3 +188,24 @@ def check_content(content: str) -> tuple[Outcome, str, str] | None:
                 f"writes what looks like a {name} into a file",
             )
     return None
+
+
+# Credentials that show up inside commands, not just files. Each pattern
+# keeps its `keep` group (the label) and masks the value after it.
+COMMAND_SECRETS = (
+    re.compile(r"(?i)(?P<keep>authorization:\s*(bearer|basic|token)\s+)\S+"),
+    re.compile(
+        r"(?i)(?P<keep>(--)?(password|passwd|token|secret|api[-_]?key)[= ]\s*)[^\s'\"]+"
+    ),
+    re.compile(r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)=)\S+"),
+    re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
+)
+
+
+def redact(text: str) -> str:
+    """Mask credential-looking values so a command can be logged."""
+    for _name, pattern in SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    for pattern in COMMAND_SECRETS:
+        text = pattern.sub(lambda m: m.group("keep") + "[REDACTED]", text)
+    return text

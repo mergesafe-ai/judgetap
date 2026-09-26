@@ -60,7 +60,7 @@ Each hop is recorded on the `Decision`. Engine errors and timeouts fall through 
 
 A pre-action hook for coding agents, built on the core.
 
-- **Agents**: Claude Code (`PreToolUse`), Cursor (`preToolUse`, 1.7+, reads the Claude Code hook format), Codex (experimental hooks). One binary, `snapjudge guard install --for claude-code|cursor|codex|all`.
+- **Agents**: Claude Code (`PreToolUse`), Cursor (`preToolUse`, 1.7+, reads the Claude Code hook format), Codex (experimental hooks). One binary, `snapjudge guard install --for claude-code`; `cursor`, `codex` and `all` arrive with #6.
 - **Two layers**:
   1. **Rules** (no model, microseconds): built-in list plus the user's `guard.toml`: recursive delete outside the workspace, force-push or push to protected branches, `DROP`/`DELETE` without `WHERE`, `terraform destroy`, secrets in written files.
   2. **Judgement** (snapjudge, ~250 ms): for everything the rules don't decide, ask: is it irreversible? is it off-task for the stated goal? does it break a rule in `AGENTS.md` / `CLAUDE.md` / `guard.md`?
