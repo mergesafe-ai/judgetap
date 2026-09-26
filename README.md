@@ -13,8 +13,8 @@ verdict = sj.yesno(
     "Is this shell command hard to undo?",
     context={"command": "git push --force origin main", "task": "fix typo in README"},
 )
-verdict.p          # 0.97
-verdict.engine     # "jev"
+verdict.p  # 0.97
+verdict.engine  # "jev"
 ```
 
 - **Adapters**: Jev, local open-weights models (Laya, AgentJev), and any structured-output LLM (OpenAI, Gemini, Anthropic, Ollama).

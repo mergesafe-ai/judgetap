@@ -14,5 +14,11 @@ dependencies = []
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
 [project.urls]
 Homepage = "https://github.com/mergesafe-ai/snapjudge"
