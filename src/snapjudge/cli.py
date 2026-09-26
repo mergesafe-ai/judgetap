@@ -109,7 +109,7 @@ def _guard_stats(args) -> int:
         print(f"judge latency p50 {p50} ms, p95 {p95} ms")
     print(f"engine cost: ${cost:.4f}")
     if errors:
-        print(f"judge errors: {errors} (ran rules only)")
+        print(f"calls with errors (engine or config; rules still ran): {errors}")
     return 0
 
 

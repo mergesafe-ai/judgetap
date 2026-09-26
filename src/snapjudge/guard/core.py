@@ -186,7 +186,8 @@ def project_rules(cwd: Path) -> str | None:
         for name in ("guard.md", "AGENTS.md", "CLAUDE.md"):
             candidate = directory / name
             if candidate.is_file():
-                return candidate.read_text(errors="replace")
+                with candidate.open(errors="replace") as fh:
+                    return fh.read(MAX_RULES_CHARS)  # only this much is ever sent
         if (directory / ".git").exists():
             break
     return None

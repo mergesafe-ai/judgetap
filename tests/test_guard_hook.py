@@ -283,3 +283,15 @@ def test_stats_nearest_rank_percentiles(tmp_path, capsys):
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     main(["guard", "stats"])
     assert "p50 30 ms, p95 1000 ms" in capsys.readouterr().out
+
+
+def test_replaced_transcript_invalidates_cache(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "a"}}) + "\n")
+    hook.last_user_message(str(t), "s4")
+    replacement = tmp_path / "new.jsonl"
+    replacement.write_text(
+        json.dumps({"type": "user", "message": {"content": "b" * 200}}) + "\n"
+    )
+    replacement.replace(t)  # same path, larger, new inode
+    assert hook.last_user_message(str(t), "s4") == "b" * 200

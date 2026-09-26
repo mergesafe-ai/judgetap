@@ -156,8 +156,13 @@ def _read_cache(cache: Path | None, transcript_path: str) -> dict | None:
     except (OSError, ValueError):
         return None
     size = Path(transcript_path).stat().st_size
-    # A different or truncated transcript invalidates the cache.
-    if data.get("path") != transcript_path or not 0 <= data.get("offset", -1) <= size:
+    # A different, replaced or truncated transcript invalidates the cache.
+    inode = Path(transcript_path).stat().st_ino
+    if (
+        data.get("path") != transcript_path
+        or data.get("inode") != inode
+        or not 0 <= data.get("offset", -1) <= size
+    ):
         return None
     return data
 
@@ -172,7 +177,13 @@ def _write_cache(
         tmp = cache.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as fh:
-            json.dump({"path": transcript_path, "offset": offset, "task": task}, fh)
+            record = {
+                "path": transcript_path,
+                "inode": Path(transcript_path).stat().st_ino,
+                "offset": offset,
+                "task": task,
+            }
+            json.dump(record, fh)
         os.replace(tmp, cache)  # atomic: a concurrent hook never reads half a file
     except OSError:
         pass

@@ -154,3 +154,67 @@ def test_header_credentials_are_redacted():
 
     out = redact("curl -H 'X-API-Key: topsecret' -H 'Cookie: sid=abc' https://api")
     assert "topsecret" not in out and "sid=abc" not in out
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then rm -rf /; fi",
+        "for d in a b; do rm -rf $d; done",
+        "(rm -rf /)",
+        "rm -rf \\\n /",
+        "while true; do rm -rf ~/x; done",
+    ],
+)
+def test_compound_and_continued_commands_are_checked(command):
+    hit = check_command(command, WS)
+    assert hit is not None and hit[1] == "rm-outside-workspace"
+
+
+def on_branch(name):
+    return lambda cwd: name
+
+
+@pytest.mark.parametrize(
+    ("command", "branch", "expect"),
+    [
+        ("git push", "main", ("hold", "push-protected")),
+        ("git push origin", "master", ("hold", "push-protected")),
+        ("git push origin HEAD", "main", ("hold", "push-protected")),
+        ("git push", None, ("ask", "push-implicit")),
+        ("git push --all origin", "feat", ("hold", "push-protected")),
+        ("git push", "feat/x", None),
+        ("git push origin main:feature", "feat", None),
+        ("git push -o ci.skip origin feat", "feat", None),
+    ],
+)
+def test_push_destination_is_what_counts(command, branch, expect):
+    hit = check_command(command, WS, branch_of=on_branch(branch))
+    assert (hit[:2] if hit else None) == expect
+
+
+def test_force_push_beats_implicit_ask():
+    hit = check_command("git push -f", WS, branch_of=on_branch(None))
+    assert hit[:2] == ("hold", "force-push")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "AKIAABCDEFGHIJKLMNOP",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "ghp_" + "a" * 36,
+        "github_pat_" + "A1_" * 10,
+        "sk-proj-" + "x" * 40,
+        "pypi-" + "y" * 60,
+    ],
+)
+def test_every_secret_detector(content):
+    assert check_content(f"value = '{content}'") is not None
+
+
+def test_json_credentials_are_redacted():
+    from snapjudge.guard.rules import redact
+
+    out = redact("""curl -d '{"password":"hunter2","api_key": "k-123"}' https://api""")
+    assert "hunter2" not in out and "k-123" not in out

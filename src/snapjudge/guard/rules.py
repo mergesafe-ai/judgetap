@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import shlex
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -31,14 +33,6 @@ COMMAND_RULES: tuple[Rule, ...] = (
         r"\bgit\s+push\b[^\n;&|]*\s(--force\b|--force-with-lease\b|-f\b|\+\S)",
         "hold",
         "force-push rewrites shared history",
-    ),
-    _r(
-        "push-protected",
-        r"\bgit\s+push\b[^\n;&|]*\s(\S+:)?(refs/heads/)?("
-        + "|".join(PROTECTED_BRANCHES)
-        + r")\b",
-        "hold",
-        "pushes straight to a protected branch",
     ),
     _r(
         "drop",
@@ -92,12 +86,13 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
     ),
     ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("github-fine-grained-token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     ("openai-key", re.compile(r"\bsk-(proj-)?[A-Za-z0-9_-]{32,}\b")),
     ("pypi-token", re.compile(r"\bpypi-[A-Za-z0-9_-]{50,}\b")),
 )
 
 
-SEPARATORS = frozenset({";", "&&", "||", "|", "&", "\n"})
+SEPARATORS = frozenset({";", "&&", "||", "|", "&", "\n", "(", ")", "((", "))", "()"})
 # Prefixes that run the rest of the line as a command.
 WRAPPERS = frozenset(
     {
@@ -126,8 +121,9 @@ UNRESOLVABLE = re.compile(r"[$`]|^~[^/]")
 def _commands(command: str) -> list[list[str]] | None:
     """Split a shell line into simple commands; None if it cannot be parsed."""
     # Newlines separate commands; shlex would otherwise treat them as spaces.
-    command = command.replace("\n", " ; ")
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    # Backslash-newline is a line continuation, not a command break.
+    command = command.replace("\\\n", " ").replace("\n", " ; ")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
     lexer.whitespace_split = True
     try:
         tokens = list(lexer)
@@ -237,45 +233,125 @@ def _rm_targets_outside(command: str, workspace: Path) -> str | None:
             # `cd -` goes to $OLDPWD, which we can't see.
             cwd = None if dest == "-" else _resolve(dest, cwd)
             continue
-        if prog != "rm":
-            continue
-        args = argv[1:]
-        short = "".join(
-            a[1:] for a in args if a.startswith("-") and not a.startswith("--")
-        )
-        if not ("r" in short.lower() or "--recursive" in args):
-            continue
-        for arg in args:
-            if arg.startswith("-"):
-                continue
-            resolved = _resolve(arg, cwd)
-            if (
-                resolved is None
-                or resolved == workspace
-                or not resolved.is_relative_to(workspace)
-            ):
-                return arg
+        # An rm anywhere in the words, not just first: `then rm ...`,
+        # `find -exec rm ...`, `echo rm ...`. Over-holding beats a missed delete.
+        starts = [j for j, word in enumerate(argv) if Path(word).name == "rm"]
+        for j in starts:
+            hit = _rm_outside(argv[j + 1 :], cwd, workspace)
+            if hit is not None:
+                return hit
     return None
 
 
-def check_command(command: str, workspace: Path) -> tuple[Outcome, str, str] | None:
-    """Return (outcome, rule, reason) for the first rule a shell command hits."""
+def _rm_outside(args: list[str], cwd: Path | None, workspace: Path) -> str | None:
+    short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+    if not ("r" in short.lower() or "--recursive" in args):
+        return None
+    for arg in args:
+        if arg.startswith("-"):
+            continue
+        resolved = _resolve(arg, cwd)
+        if (
+            resolved is None
+            or resolved == workspace
+            or not resolved.is_relative_to(workspace)
+        ):
+            return arg
+    return None
+
+
+def current_branch(cwd: Path) -> str | None:
+    """The checked-out branch in cwd, or None if unknown (detached, not a repo)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(cwd), "symbolic-ref", "--quiet", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout.strip() or None
+
+
+PUSH_VALUE_FLAGS = frozenset(
+    {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+)
+
+
+def _push_rule(
+    argv: list[str], cwd: Path, branch_of: Callable[[Path], str | None]
+) -> tuple[Outcome, str, str] | None:
+    """Judge one `git push` by its destination refs, not by words in it."""
+    args = argv[2:]
+    if {"--all", "--mirror"} & set(args):
+        return "hold", "push-protected", "pushes every branch, protected ones included"
+    positional, skip = [], False
+    for arg in args:
+        if skip:
+            skip = False
+        elif arg in PUSH_VALUE_FLAGS:
+            skip = True
+        elif not arg.startswith("-"):
+            positional.append(arg)
+    refspecs = positional[1:]  # positional[0] is the remote
+    if not refspecs:
+        refspecs = ["HEAD"]  # plain `git push [remote]` pushes the current branch
+    for spec in refspecs:
+        dest = spec.lstrip("+").split(":")[-1]
+        dest = dest.removeprefix("refs/heads/")
+        if dest == "HEAD":
+            dest = branch_of(cwd)
+            if dest is None:
+                return "ask", "push-implicit", "push destination can't be determined"
+        if dest in PROTECTED_BRANCHES:
+            return (
+                "hold",
+                "push-protected",
+                f"pushes straight to protected branch {dest!r}",
+            )
+    return None
+
+
+def check_command(
+    command: str,
+    workspace: Path,
+    branch_of: Callable[[Path], str | None] = current_branch,
+) -> tuple[Outcome, str, str] | None:
+    """Return (outcome, rule, reason) for the strongest rule a command hits:
+    any hold beats any ask, so a cautious rule can't mask a dangerous one."""
     command = GIT_GLOBALS.sub("git ", command)
-    for inner in nested_commands(command):
-        hit = check_command(inner, workspace)
-        if hit:
-            return hit
+    hits = [
+        h
+        for inner in nested_commands(command)
+        if (h := check_command(inner, workspace, branch_of))
+    ]
     outside = _rm_targets_outside(command, workspace.resolve())
     if outside is not None:
-        return (
-            "hold",
-            "rm-outside-workspace",
-            f"recursive delete of {outside!r} outside the workspace",
+        hits.append(
+            (
+                "hold",
+                "rm-outside-workspace",
+                (
+                    f"recursive delete of {outside!r}, which is outside the workspace "
+                    "or can't be resolved before the shell runs"
+                ),
+            )
         )
-    for rule in COMMAND_RULES:
-        if rule.pattern.search(command):
-            return rule.outcome, rule.name, rule.reason
-    return None
+    hits += [
+        (r.outcome, r.name, r.reason)
+        for r in COMMAND_RULES
+        if r.pattern.search(command)
+    ]
+    for argv in _commands(command) or []:
+        if argv[:2] == ["git", "push"] and (
+            h := _push_rule(argv, workspace, branch_of)
+        ):
+            hits.append(h)
+    if not hits:
+        return None
+    return next((h for h in hits if h[0] == "hold"), hits[0])
 
 
 def check_content(content: str) -> tuple[Outcome, str, str] | None:
@@ -294,6 +370,11 @@ def check_content(content: str) -> tuple[Outcome, str, str] | None:
 # keeps its `keep` group (the label) and masks the value after it.
 COMMAND_SECRETS = (
     re.compile(r"(?i)(?P<keep>authorization:\s*(bearer|basic|token)\s+)\S+"),
+    # JSON fields: {"password": "v"}, {"api_key":"v"}.
+    re.compile(
+        r"(?i)(?P<keep>\"[\w-]*(password|passwd|token|secret|api[-_]?key|auth)[\w-]*\"\s*:\s*)"
+        r"\"[^\"]*\""
+    ),
     # Header-style credentials: X-API-Key: v, X-Auth-Token: v, Cookie: v.
     re.compile(
         r"(?i)(?P<keep>\b[\w-]*(api[-_]?key|token|secret|password|auth|cookie)[\w-]*\s*:\s*)"
