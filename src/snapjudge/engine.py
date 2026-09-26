@@ -23,6 +23,10 @@ class RawAnswer:
     distribution: Mapping[str, float]
     cost_usd: float | None = None
     calibrated: bool = True
+    # Set by composite engines (the cascade): which engine actually answered,
+    # and every engine consulted, in order.
+    engine: str | None = None
+    hops: tuple[str, ...] = ()
 
 
 @runtime_checkable
