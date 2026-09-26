@@ -52,11 +52,34 @@ def action_from_hook(payload: dict[str, Any]) -> Action | None:
     return action
 
 
-def _lines_backward(path: str, chunk: int = 65_536):
-    """Yield a file's lines newest first, reading from the end in chunks."""
+def _complete_size(path: str) -> int:
+    """Bytes up to and including the file's last newline, or the whole file
+    when its unterminated last line is already a complete JSON record."""
     with open(path, "rb") as fh:
-        fh.seek(0, os.SEEK_END)
-        pos, tail = fh.tell(), b""
+        size = pos = fh.seek(0, os.SEEK_END)
+        while pos > 0:
+            step = min(65_536, pos)
+            pos -= step
+            fh.seek(pos)
+            idx = fh.read(step).rfind(b"\n")
+            if idx != -1:
+                pos += idx + 1
+                break
+        fh.seek(pos)
+        tail = fh.read()
+    try:
+        json.loads(tail)
+        return size
+    except ValueError:
+        return pos
+
+
+def _lines_backward(path: str, chunk: int = 65_536, end: int | None = None):
+    """Yield a file's lines newest first, reading back from `end` (default
+    EOF) in chunks."""
+    with open(path, "rb") as fh:
+        pos = fh.seek(0, os.SEEK_END) if end is None else end
+        tail = b""
         while pos > 0:
             step = min(chunk, pos)
             pos -= step
@@ -100,10 +123,10 @@ def last_user_message(
     cache = _cache_path(session)
     cached = _read_cache(cache, transcript_path)
     if cached is None:
-        task = next(
-            filter(None, map(_user_text, _lines_backward(transcript_path))), None
-        )
-        offset = Path(transcript_path).stat().st_size
+        # Stop at the last newline: a half-written final record is read next time.
+        offset = _complete_size(transcript_path)
+        lines = _lines_backward(transcript_path, end=offset)
+        task = next(filter(None, map(_user_text, lines)), None)
     else:
         task, offset = cached["task"], cached["offset"]
         with open(transcript_path, "rb") as fh:

@@ -38,7 +38,9 @@ def _resolve(engine: Engine | None) -> Engine:
     return chosen
 
 
-def _validate(question: Question, raw: RawAnswer, engine: str) -> dict[str, float]:
+def validate_answer(
+    question: Question, raw: RawAnswer, engine: str
+) -> dict[str, float]:
     dist = dict(raw.distribution)
     if set(dist) != set(question.options):
         raise InvalidAnswerError(
@@ -69,7 +71,7 @@ def _decisions(
         )
     out = []
     for question, raw in zip(questions, answers, strict=True):
-        dist = _validate(question, raw, engine.name)
+        dist = validate_answer(question, raw, engine.name)
         value = max(dist, key=dist.__getitem__)  # first option wins a tie
         out.append(
             Decision(
@@ -77,10 +79,12 @@ def _decisions(
                 value=value,
                 p=dist[value],
                 distribution=dist,
-                engine=engine.name,
+                engine=raw.engine or engine.name,
                 latency_ms=latency_ms,
                 cost_usd=raw.cost_usd,
+                escalated=len(raw.hops) > 1,
                 calibrated=raw.calibrated,
+                meta={"hops": list(raw.hops)} if raw.hops else {},
             )
         )
     return out

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import sys
 from collections import Counter
 from pathlib import Path
@@ -63,6 +64,17 @@ def _guard_test(args) -> int:
     return 0
 
 
+def _rank(histogram: Counter[int], q: float) -> int:
+    """Nearest-rank percentile: smallest value with at least q of samples at or below it."""
+    target = max(1, math.ceil(q * sum(histogram.values())))
+    seen = 0
+    for value in sorted(histogram):
+        seen += histogram[value]
+        if seen >= target:
+            return value
+    return max(histogram)
+
+
 def _guard_stats(args) -> int:
     from snapjudge.guard.hook import home
 
@@ -72,7 +84,7 @@ def _guard_stats(args) -> int:
         return 0
     outcomes: Counter[str] = Counter()
     layers: Counter[str] = Counter()
-    latencies: list[float] = []
+    latency_ms: Counter[int] = Counter()  # 1 ms histogram: bounded memory
     total = errors = 0
     cost = 0.0
     with path.open() as fh:  # streamed: the log grows without bound
@@ -86,16 +98,15 @@ def _guard_stats(args) -> int:
             cost += r.get("cost_usd") or 0
             errors += bool(r.get("error"))
             if r["layer"] == "judge" and not r.get("error"):
-                latencies.append(r["latency_ms"])
+                latency_ms[round(r["latency_ms"])] += 1
     print(f"{total} guarded calls  ({path})")
     print("outcomes: " + ", ".join(f"{k} {v}" for k, v in outcomes.most_common()))
     print("layers:   " + ", ".join(f"{k} {v}" for k, v in layers.most_common()))
     if total:
         print(f"holds per 1,000 calls: {1000 * outcomes['hold'] / total:.1f}")
-    if latencies:
-        latencies.sort()
-        p50, p95 = latencies[len(latencies) // 2], latencies[int(len(latencies) * 0.95)]
-        print(f"judge latency p50 {p50:.0f} ms, p95 {p95:.0f} ms")
+    if latency_ms:
+        p50, p95 = _rank(latency_ms, 0.5), _rank(latency_ms, 0.95)
+        print(f"judge latency p50 {p50} ms, p95 {p95} ms")
     print(f"engine cost: ${cost:.4f}")
     if errors:
         print(f"judge errors: {errors} (ran rules only)")

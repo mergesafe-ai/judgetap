@@ -142,18 +142,65 @@ def _commands(command: str) -> list[list[str]] | None:
     return [_unwrap(c) for c in commands if c]
 
 
+# Wrapper flags that consume the next argument (`sudo -u root rm ...`).
+WRAPPER_ARG_FLAGS = {
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "xargs": {
+        "-I",
+        "-n",
+        "-P",
+        "-L",
+        "-s",
+        "-d",
+        "-E",
+        "-a",
+        "--max-args",
+        "--max-procs",
+    },
+    "stdbuf": {"-i", "-o", "-e"},
+}
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+
+
 def _unwrap(argv: list[str]) -> list[str]:
-    """Drop sudo/env/... prefixes, their flags and VAR=value assignments."""
+    """Drop sudo/env/... prefixes, their flags (and flag values), VAR=value
+    assignments and a timeout duration, leaving the command that really runs."""
     i = 0
     while i < len(argv):
         name = Path(argv[i]).name
-        if name in WRAPPERS or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[i]):
+        if ASSIGNMENT.fullmatch(argv[i]):
             i += 1
-            while i < len(argv) and (argv[i].startswith("-") or argv[i].isdigit()):
-                i += 1  # wrapper flags and timeout durations
             continue
-        break
+        if name not in WRAPPERS:
+            break
+        takes_arg = WRAPPER_ARG_FLAGS.get(name, set())
+        i += 1
+        while i < len(argv):
+            arg = argv[i]
+            if arg == "--":
+                i += 1
+                break
+            if arg in takes_arg:
+                i += 2
+            elif arg.startswith("-") or ASSIGNMENT.fullmatch(arg):
+                i += 1
+            elif name == "timeout" and re.fullmatch(r"\d+(\.\d+)?[smhd]?", arg):
+                i += 1  # the duration
+                break
+            else:
+                break
     return argv[i:] or argv
+
+
+# git options that come before the subcommand: `git -C dir push --force`.
+GIT_GLOBALS = re.compile(
+    r"\bgit((?:\s+(?:-C\s+\S+|-c\s+\S+|--git-dir(?:=|\s+)\S+|--work-tree(?:=|\s+)\S+"
+    r"|--namespace(?:=|\s+)\S+|--no-pager|-P|--bare|--no-replace-objects|--literal-pathspecs))+)\s"
+)
 
 
 def nested_commands(command: str) -> list[str]:
@@ -213,6 +260,7 @@ def _rm_targets_outside(command: str, workspace: Path) -> str | None:
 
 def check_command(command: str, workspace: Path) -> tuple[Outcome, str, str] | None:
     """Return (outcome, rule, reason) for the first rule a shell command hits."""
+    command = GIT_GLOBALS.sub("git ", command)
     for inner in nested_commands(command):
         hit = check_command(inner, workspace)
         if hit:
@@ -246,6 +294,11 @@ def check_content(content: str) -> tuple[Outcome, str, str] | None:
 # keeps its `keep` group (the label) and masks the value after it.
 COMMAND_SECRETS = (
     re.compile(r"(?i)(?P<keep>authorization:\s*(bearer|basic|token)\s+)\S+"),
+    # Header-style credentials: X-API-Key: v, X-Auth-Token: v, Cookie: v.
+    re.compile(
+        r"(?i)(?P<keep>\b[\w-]*(api[-_]?key|token|secret|password|auth|cookie)[\w-]*\s*:\s*)"
+        r"(?!(bearer|basic|token)\s)[^\s'\"]+"
+    ),
     re.compile(
         r"(?i)(?P<keep>(--)?(password|passwd|token|secret|api[-_]?key)[= ]\s*)[^\s'\"]+"
     ),

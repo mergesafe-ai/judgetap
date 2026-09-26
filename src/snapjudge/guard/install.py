@@ -50,9 +50,14 @@ def install(path: Path) -> bool:
 def uninstall(path: Path) -> bool:
     data = _load(path)
     pre = data.get("hooks", {}).get("PreToolUse", [])
-    kept = [e for e in pre if not _is_ours(e)]
-    if len(kept) == len(pre):
+    if not any(_is_ours(e) for e in pre):
         return False
+    kept = []
+    for entry in pre:
+        # Remove only our hook; keep any others that share its matcher group.
+        hooks = [h for h in entry.get("hooks", []) if h.get("command") != HOOK_COMMAND]
+        if hooks:
+            kept.append({**entry, "hooks": hooks})
     data["hooks"]["PreToolUse"] = kept
     if not kept:
         del data["hooks"]["PreToolUse"]

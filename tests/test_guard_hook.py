@@ -237,3 +237,49 @@ def test_unsafe_session_ids_are_not_cached(tmp_path):
     t.write_text(json.dumps({"type": "user", "message": {"content": "x"}}) + "\n")
     assert hook.last_user_message(str(t), "../../etc/evil") == "x"
     assert not (tmp_path / "etc").exists()
+
+
+def test_partial_user_record_on_first_read_is_picked_up_later(tmp_path):
+    t = tmp_path / "t.jsonl"
+    done = json.dumps({"type": "user", "message": {"content": "old task"}})
+    partial = json.dumps({"type": "user", "message": {"content": "new task"}})
+    t.write_text(done + "\n" + partial[:20])
+    assert hook.last_user_message(str(t), "s3") == "old task"
+    with t.open("a") as fh:
+        fh.write(partial[20:] + "\n")
+    assert hook.last_user_message(str(t), "s3") == "new task"
+
+
+def test_uninstall_keeps_other_hooks_in_the_same_group(tmp_path):
+    path = tmp_path / "settings.json"
+    group = {
+        "matcher": "Bash",
+        "hooks": [
+            {"type": "command", "command": "rtk"},
+            {"type": "command", "command": HOOK_COMMAND},
+        ],
+    }
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [group]}}))
+    assert uninstall(path) is True
+    hooks = json.loads(path.read_text())["hooks"]["PreToolUse"][0]["hooks"]
+    assert [h["command"] for h in hooks] == ["rtk"]
+
+
+def test_stats_nearest_rank_percentiles(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    log = tmp_path / "home" / "guard.jsonl"
+    log.parent.mkdir(parents=True)
+    rows = [
+        {
+            "outcome": "allow",
+            "layer": "judge",
+            "latency_ms": ms,
+            "cost_usd": None,
+            "error": None,
+        }
+        for ms in (10, 20, 30, 40, 1000)
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    main(["guard", "stats"])
+    assert "p50 30 ms, p95 1000 ms" in capsys.readouterr().out

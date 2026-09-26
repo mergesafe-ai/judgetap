@@ -11,6 +11,7 @@ from snapjudge.api import (
     score,
     yesno,
 )
+from snapjudge.cascade import Cascade, CascadeExhaustedError
 from snapjudge.engine import Context, Engine, RawAnswer
 from snapjudge.errors import (
     InvalidAnswerError,
@@ -20,9 +21,11 @@ from snapjudge.errors import (
 )
 from snapjudge.types import Decision, Question
 
-__version__ = "0.0.1"
+__version__ = "0.0.1"  # x-release-please-version
 
 __all__ = [
+    "Cascade",
+    "CascadeExhaustedError",
     "Context",
     "Decision",
     "Engine",

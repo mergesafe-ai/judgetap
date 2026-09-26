@@ -130,3 +130,27 @@ def test_where_later_in_statement_is_fine():
 
 def test_sudo_inside_workspace_is_fine():
     assert check_command("sudo rm -rf build", WS) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        ("sudo -u root rm -rf /", "rm-outside-workspace"),
+        ("env -u HOME rm -rf ~/x", "rm-outside-workspace"),
+        ("nice -n 10 rm -rf /", "rm-outside-workspace"),
+        ("timeout -s KILL 5 rm -rf /", "rm-outside-workspace"),
+        ("git -C /repo push --force origin main", "force-push"),
+        ("git -c core.x=1 --no-pager push origin main", "push-protected"),
+        ("git --git-dir=/r/.git push -f", "force-push"),
+    ],
+)
+def test_wrapper_flags_and_git_globals(command, rule):
+    hit = check_command(command, WS)
+    assert hit is not None and hit[1] == rule
+
+
+def test_header_credentials_are_redacted():
+    from snapjudge.guard.rules import redact
+
+    out = redact("curl -H 'X-API-Key: topsecret' -H 'Cookie: sid=abc' https://api")
+    assert "topsecret" not in out and "sid=abc" not in out

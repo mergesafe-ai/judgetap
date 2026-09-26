@@ -21,13 +21,15 @@ verdict.p  # 0.97
 verdict.engine  # "jev"
 ```
 
+Local engines: `sj.engines.load("laya")` runs Laya in process (`pip install "snapjudge[laya]"`; on a CPU-only Linux box install the CPU PyTorch wheel first with `pip install torch --index-url https://download.pytorch.org/whl/cpu`, or pip pulls the multi-GB CUDA build). `sj.engines.load("agentjev")` talks to a local AgentJev server.
+
 - **Adapters**: Jev, local open-weights models (Laya, AgentJev), and any structured-output LLM (OpenAI, Gemini, Anthropic, Ollama).
 - **Cascade**: ask the cheap, fast engine first; send low-confidence answers to a stronger one, or to a human.
 - **Calibration check**: run your labelled examples through every engine and compare accuracy, calibration, speed and cost.
 
 ## snapjudge guard
 
-A pre-action hook for Claude Code (Cursor and Codex next, #6). Every command, file write and edit is checked before it runs: hard rules for the obvious (`rm -rf /`, force-push to `main`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
+A pre-action hook for Claude Code (Cursor and Codex next, #6). Every command, file write and edit is checked before it runs: hard rules for the obvious (`rm -rf /`, force-push to `main`), and, once you configure an engine (`SNAPJUDGE_ENGINE`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Without an engine the guard runs its rules only. Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
 
 ## Status
 
