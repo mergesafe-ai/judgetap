@@ -119,3 +119,33 @@ def test_async_variants_match_sync():
 
     single, many = asyncio.run(run())
     assert single.value == many[0].value == "yes"
+
+
+def test_falsey_explicit_engine_is_still_used():
+    class Falsey(StaticEngine):
+        def __bool__(self):
+            return False
+
+    sj.configure(fixed({"yes": 0.9, "no": 0.1}))
+    engine = Falsey(lambda q, ctx: {"yes": 0.1, "no": 0.9}, name="falsey")
+    assert sj.yesno("q", engine=engine).engine == "falsey"
+
+
+def test_huge_integer_probability_is_invalid_answer_not_overflow():
+    with pytest.raises(sj.InvalidAnswerError):
+        sj.yesno("q", engine=fixed({"yes": 10**1000, "no": 0}))
+
+
+def test_async_choice_and_score():
+    engine = StaticEngine(
+        lambda q, ctx: {o: (1.0 if i == 0 else 0.0) for i, o in enumerate(q.options)}
+    )
+
+    async def run():
+        return (
+            await sj.achoice("c", ["a", "b"], engine=engine),
+            await sj.ascore("s", ["lo", "hi"], engine=engine),
+        )
+
+    c, s = asyncio.run(run())
+    assert (c.value, s.value, s.level) == ("a", "lo", 0)

@@ -18,13 +18,18 @@ _default_engine: Engine | None = None
 
 
 def configure(engine: Engine | None) -> None:
-    """Set the engine used when a call does not pass one. None clears it."""
+    """Set the process-wide default engine; None clears it.
+
+    A call's own `engine=` argument always takes precedence. Engine adapters
+    and file/env configuration arrive with #2; until then an engine is any
+    object implementing `snapjudge.Engine`.
+    """
     global _default_engine
     _default_engine = engine
 
 
 def _resolve(engine: Engine | None) -> Engine:
-    chosen = engine or _default_engine
+    chosen = engine if engine is not None else _default_engine
     if chosen is None:
         raise NoEngineError(
             "no engine configured: call snapjudge.configure(engine) "
@@ -41,7 +46,8 @@ def _validate(question: Question, raw: RawAnswer, engine: str) -> dict[str, floa
             f"expected exactly {list(question.options)!r}"
         )
     for option, p in dist.items():
-        if not (isinstance(p, int | float) and math.isfinite(p) and 0 <= p <= 1):
+        # Range first: math.isfinite overflows on huge ints.
+        if not (isinstance(p, int | float) and 0 <= p <= 1 and math.isfinite(p)):
             raise InvalidAnswerError(f"{engine} gave {option!r} probability {p!r}")
     total = sum(dist.values())
     if abs(total - 1) > SUM_TOLERANCE:

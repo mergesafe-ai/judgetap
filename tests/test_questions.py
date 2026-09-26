@@ -36,3 +36,16 @@ def test_level_and_p_yes_only_on_their_kinds():
         _ = d.p_yes
     with pytest.raises(AttributeError):
         _ = d.level
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Question("bogus", "q", ("a", "b")),
+        lambda: Question.choice("route", [1, 2]),
+        lambda: Question.choice(None, ["a", "b"]),
+    ],
+)
+def test_wrong_kinds_and_types_raise_invalid_question(build):
+    with pytest.raises(InvalidQuestionError):
+        build()
