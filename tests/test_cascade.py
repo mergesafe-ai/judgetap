@@ -110,3 +110,60 @@ def test_async_cascade():
 def test_bad_cascade_config(kwargs):
     with pytest.raises(sj.SnapjudgeError):
         sj.Cascade(**kwargs)
+
+
+def priced(name, p_yes, cost):
+    class Priced(StaticEngine):
+        def decide(self, questions, context):
+            return [
+                sj.RawAnswer({"yes": p_yes, "no": 1 - p_yes}, cost_usd=cost)
+                for _ in questions
+            ]
+
+    return Priced(lambda q, c: {}, name=name)
+
+
+@pytest.mark.parametrize(
+    ("on_exhausted", "engines", "cost"),
+    [
+        ("raise", [priced("a", 0.5, 0.01), priced("b", 0.9, 0.02)], 0.03),
+        ("return_last", [priced("a", 0.5, 0.01), priced("b", 0.6, 0.02)], 0.03),
+        (
+            lambda q, a: {"yes": 1.0, "no": 0.0},
+            [priced("a", 0.5, 0.01), priced("b", 0.6, 0.02)],
+            0.03,
+        ),
+    ],
+)
+def test_cost_sums_every_engine_paid(on_exhausted, engines, cost):
+    d = sj.yesno("q", engine=sj.Cascade(engines, on_exhausted=on_exhausted))
+    assert d.cost_usd == pytest.approx(cost)
+
+
+def test_cost_is_none_when_no_engine_reports_it():
+    assert (
+        sj.yesno("q", engine=sj.Cascade([eng("a", 0.5), eng("b", 0.9)])).cost_usd
+        is None
+    )
+
+
+@pytest.mark.parametrize("bad", [None, [sj.RawAnswer(None)], [object()]])
+def test_malformed_results_fall_through(bad):
+    class Bad(StaticEngine):
+        def decide(self, questions, context):
+            return bad
+
+    d = sj.yesno(
+        "q", engine=sj.Cascade([Bad(lambda q, c: {}, name="bad"), eng("good", 0.9)])
+    )
+    assert d.engine == "good" and d.meta["hops"] == ["bad", "good"]
+
+
+def test_nested_cascade_keeps_inner_engine_and_hops():
+    inner = sj.Cascade([eng("cheap", 0.5), eng("strong", 0.9)])
+    d = sj.yesno("q", engine=sj.Cascade([inner]))
+    assert (d.engine, d.escalated, d.meta["hops"]) == (
+        "strong",
+        True,
+        ["cheap", "strong"],
+    )

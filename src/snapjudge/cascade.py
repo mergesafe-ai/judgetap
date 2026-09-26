@@ -91,38 +91,61 @@ class Cascade:
         )
 
     def _record(self, engine, questions, pending, answers, attempts) -> None:
-        if isinstance(answers, Exception) or len(answers) != len(pending):
-            err = (
-                answers
-                if isinstance(answers, Exception)
-                else SnapjudgeError(
+        try:
+            if isinstance(answers, Exception):
+                raise answers
+            answers = list(answers)
+            if len(answers) != len(pending):
+                raise SnapjudgeError(
                     f"{engine.name} returned {len(answers)} answers for {len(pending)} questions"
                 )
-            )
+        except Exception as err:  # noqa: BLE001 -- a malformed batch counts as no answer
             for i in pending:
                 attempts[i].append(Attempt(engine.name, error=err))
             return
         for i, raw in zip(pending, answers, strict=True):
             try:
                 dist = validate_answer(questions[i], raw, engine.name)
-            except SnapjudgeError as err:
+            except Exception as err:  # noqa: BLE001 -- including TypeError from a bad RawAnswer
                 attempts[i].append(Attempt(engine.name, error=err))
                 continue
             clean = replace(raw, distribution=dist)
             attempts[i].append(Attempt(engine.name, answer=clean, p=max(dist.values())))
 
     def _finish(self, question: Question, attempts: Sequence[Attempt]) -> RawAnswer:
-        hops = tuple(a.engine for a in attempts)
+        hops = _hops(attempts)
         answered = [a for a in attempts if a.answer is not None]
+        costs = [a.answer.cost_usd for a in answered if a.answer.cost_usd is not None]
+        spent = (
+            sum(costs) if costs else None
+        )  # everything paid for, not just the winner
         if self._confident(attempts):
-            return replace(attempts[-1].answer, engine=attempts[-1].engine, hops=hops)
+            return _as_result(attempts[-1], hops, spent)
         if callable(self.on_exhausted):
             dist = self.on_exhausted(question, attempts)
-            return RawAnswer(dict(dist), engine="fallback", hops=(*hops, "fallback"))
+            return RawAnswer(
+                dict(dist), cost_usd=spent, engine="fallback", hops=(*hops, "fallback")
+            )
         if self.on_exhausted == "return_last" and answered:
-            last = answered[-1]
-            return replace(last.answer, engine=last.engine, hops=hops)
+            return _as_result(answered[-1], hops, spent)
         errors = "; ".join(f"{a.engine}: {a.error or f'p={a.p:.2f}'}" for a in attempts)
         raise CascadeExhaustedError(
             f"no engine reached p>={self.escalate_below} for {question.text!r} ({errors})"
         )
+
+
+def _hops(attempts: Sequence[Attempt]) -> tuple[str, ...]:
+    """Every engine consulted, expanding a nested cascade's own path."""
+    hops: list[str] = []
+    for a in attempts:
+        inner = a.answer.hops if a.answer is not None else ()
+        hops.extend(inner or (a.engine,))
+    return tuple(hops)
+
+
+def _as_result(
+    attempt: Attempt, hops: tuple[str, ...], spent: float | None
+) -> RawAnswer:
+    # A nested cascade already names the engine that really answered.
+    engine = attempt.answer.engine or attempt.engine
+    return replace(attempt.answer, engine=engine, hops=hops, cost_usd=spent)
