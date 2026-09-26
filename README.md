@@ -9,6 +9,10 @@ Each has its own API, answer shape and way of reporting confidence. snapjudge pu
 ```python
 import snapjudge as sj
 
+sj.configure(
+    engine
+)  # any snapjudge.Engine; bundled adapters for Jev and LLMs are coming (#2)
+
 verdict = sj.yesno(
     "Is this shell command hard to undo?",
     context={"command": "git push --force origin main", "task": "fix typo in README"},

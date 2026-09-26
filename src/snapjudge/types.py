@@ -24,6 +24,16 @@ class Question:
     options: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if self.kind not in ("choice", "score", "yesno"):
+            raise InvalidQuestionError(
+                f"unknown question kind {self.kind!r}; use choice, score or yesno"
+            )
+        if not isinstance(self.text, str):
+            raise InvalidQuestionError(
+                f"question text must be a string, got {self.text!r}"
+            )
+        if not all(isinstance(o, str) for o in self.options):
+            raise InvalidQuestionError(f"options must be strings, got {self.options!r}")
         if not self.text.strip():
             raise InvalidQuestionError("question text is empty")
         if len(set(self.options)) != len(self.options):
@@ -63,8 +73,9 @@ class Decision:
     """An engine's answer to one question.
 
     `value` is always one of the question's options. `p` is the probability
-    the engine gave to `value`; for a yes/no question use `p_yes` to read the
-    probability of "yes" regardless of which side won.
+    of `value` after snapjudge renormalises the engine's distribution to sum
+    to exactly 1; for a yes/no question use `p_yes` to read the probability
+    of "yes" regardless of which side won.
     """
 
     question: Question
