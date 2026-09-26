@@ -34,7 +34,9 @@ COMMAND_RULES: tuple[Rule, ...] = (
     ),
     _r(
         "push-protected",
-        r"\bgit\s+push\b[^\n;&|]*\s(\S+:)?(" + "|".join(PROTECTED_BRANCHES) + r")\b",
+        r"\bgit\s+push\b[^\n;&|]*\s(\S+:)?(refs/heads/)?("
+        + "|".join(PROTECTED_BRANCHES)
+        + r")\b",
         "hold",
         "pushes straight to a protected branch",
     ),
@@ -46,7 +48,8 @@ COMMAND_RULES: tuple[Rule, ...] = (
     ),
     _r(
         "delete-without-where",
-        r"\bdelete\s+from\s+[\w.\"`]+\s*(;|$|\"|')",
+        # No WHERE before the statement ends: comments and trailing text don't hide it.
+        r"\bdelete\s+from\s+[\w.\"`]+(?![^;]*\bwhere\b)",
         "hold",
         "DELETE without a WHERE clause removes every row",
     ),
@@ -95,12 +98,35 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 SEPARATORS = frozenset({";", "&&", "||", "|", "&", "\n"})
+# Prefixes that run the rest of the line as a command.
+WRAPPERS = frozenset(
+    {
+        "sudo",
+        "doas",
+        "env",
+        "nice",
+        "nohup",
+        "time",
+        "command",
+        "exec",
+        "xargs",
+        "stdbuf",
+        "timeout",
+    }
+)
+# Shell text that runs as a command inside another: $(...), `...`, sh -c '...'.
+SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+SHELL_STRING = re.compile(
+    r"\b(?:ba|z|da)?sh\s+-\w*c\s+(['\"])(.*?)\1|\beval\s+(['\"])(.*?)\3", re.DOTALL
+)
 # Anything the shell rewrites before rm sees it: we cannot know the real path.
 UNRESOLVABLE = re.compile(r"[$`]|^~[^/]")
 
 
 def _commands(command: str) -> list[list[str]] | None:
     """Split a shell line into simple commands; None if it cannot be parsed."""
+    # Newlines separate commands; shlex would otherwise treat them as spaces.
+    command = command.replace("\n", " ; ")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
     lexer.whitespace_split = True
     try:
@@ -113,7 +139,28 @@ def _commands(command: str) -> list[list[str]] | None:
             commands.append([])
         else:
             commands[-1].append(tok)
-    return [c for c in commands if c]
+    return [_unwrap(c) for c in commands if c]
+
+
+def _unwrap(argv: list[str]) -> list[str]:
+    """Drop sudo/env/... prefixes, their flags and VAR=value assignments."""
+    i = 0
+    while i < len(argv):
+        name = Path(argv[i]).name
+        if name in WRAPPERS or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[i]):
+            i += 1
+            while i < len(argv) and (argv[i].startswith("-") or argv[i].isdigit()):
+                i += 1  # wrapper flags and timeout durations
+            continue
+        break
+    return argv[i:] or argv
+
+
+def nested_commands(command: str) -> list[str]:
+    """Command text that the shell runs inside this one."""
+    inner = [a or b for a, b in SUBSTITUTION.findall(command)]
+    inner += [m.group(2) or m.group(4) for m in SHELL_STRING.finditer(command)]
+    return [c for c in inner if c and c.strip()]
 
 
 def _resolve(arg: str, cwd: Path | None) -> Path | None:
@@ -140,7 +187,8 @@ def _rm_targets_outside(command: str, workspace: Path) -> str | None:
         prog = Path(argv[0]).name
         if prog in ("cd", "pushd"):
             dest = argv[1] if len(argv) > 1 else "~"
-            cwd = _resolve(dest, cwd)
+            # `cd -` goes to $OLDPWD, which we can't see.
+            cwd = None if dest == "-" else _resolve(dest, cwd)
             continue
         if prog != "rm":
             continue
@@ -165,6 +213,10 @@ def _rm_targets_outside(command: str, workspace: Path) -> str | None:
 
 def check_command(command: str, workspace: Path) -> tuple[Outcome, str, str] | None:
     """Return (outcome, rule, reason) for the first rule a shell command hits."""
+    for inner in nested_commands(command):
+        hit = check_command(inner, workspace)
+        if hit:
+            return hit
     outside = _rm_targets_outside(command, workspace.resolve())
     if outside is not None:
         return (

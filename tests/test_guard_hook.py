@@ -199,3 +199,41 @@ def test_cli_install_and_uninstall(tmp_path, monkeypatch, capsys):
     assert HOOK_COMMAND in (tmp_path / ".claude" / "settings.json").read_text()
     main(["guard", "uninstall", "--scope", "project"])
     assert HOOK_COMMAND not in (tmp_path / ".claude" / "settings.json").read_text()
+
+
+def test_transcript_cache_reads_only_new_bytes(tmp_path, monkeypatch):
+    t = tmp_path / "t.jsonl"
+    user = lambda text: json.dumps({"type": "user", "message": {"content": text}})
+    tool = json.dumps({"type": "assistant", "message": {"content": "x" * 50}})
+    t.write_text(user("first task") + "\n" + tool + "\n")
+    assert hook.last_user_message(str(t), "s1") == "first task"
+
+    parsed = []
+    real = hook._user_text
+    monkeypatch.setattr(hook, "_user_text", lambda raw: parsed.append(raw) or real(raw))
+    with t.open("a") as fh:
+        fh.write(tool + "\n" + tool + "\n")
+    assert hook.last_user_message(str(t), "s1") == "first task"
+    assert len(parsed) == 2  # only the two new lines
+    with t.open("a") as fh:
+        fh.write(
+            user("second task") + "\n" + '{"type": "user", "mess'
+        )  # half-written line
+    assert hook.last_user_message(str(t), "s1") == "second task"
+
+
+def test_transcript_cache_invalidated_by_truncation(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user", "message": {"content": "long " * 100}}) + "\n"
+    )
+    hook.last_user_message(str(t), "s2")
+    t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
+    assert hook.last_user_message(str(t), "s2") == "new"
+
+
+def test_unsafe_session_ids_are_not_cached(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "x"}}) + "\n")
+    assert hook.last_user_message(str(t), "../../etc/evil") == "x"
+    assert not (tmp_path / "etc").exists()

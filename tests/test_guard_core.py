@@ -134,3 +134,9 @@ def test_mutating_listing_commands_are_judged(command):
 )
 def test_listing_commands_skip_the_judge(command):
     assert check(act(command), judge()).layer == "skip"
+
+
+def test_multiline_read_only_prefix_is_still_judged():
+    engine = judge()
+    v = check(act("git status\nmake deploy"), engine)
+    assert v.layer == "judge"

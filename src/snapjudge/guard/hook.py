@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -44,7 +45,9 @@ def action_from_hook(payload: dict[str, Any]) -> Action | None:
             action.content = "\n".join(
                 e.get("new_string", "") for e in inp.get("edits", [])
             )
-    action.task = last_user_message(payload.get("transcript_path"))
+    action.task = last_user_message(
+        payload.get("transcript_path"), payload.get("session_id")
+    )
     action.project_rules = project_rules(cwd)
     return action
 
@@ -65,29 +68,91 @@ def _lines_backward(path: str, chunk: int = 65_536):
         yield tail
 
 
-def last_user_message(transcript_path: str | None) -> str | None:
+def _user_text(raw: bytes) -> str | None:
+    """The text of a plain user turn, or None for anything else."""
+    try:
+        entry = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict) or entry.get("type") != "user":
+        return None
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str) and content.strip():
+        return content[-2_000:]
+    if isinstance(content, list):
+        texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+        if any(t.strip() for t in texts):
+            return "\n".join(texts)[-2_000:]
+    return None
+
+
+def last_user_message(
+    transcript_path: str | None, session: str | None = None
+) -> str | None:
     """The newest plain-text user turn in a Claude Code JSONL transcript.
 
-    Reads from the end, so the cost is the distance to the last user turn,
-    not the length of the session.
+    With a session id, the answer and the byte offset read so far are cached,
+    so each later call reads only what the transcript gained since: total
+    work stays linear in the transcript, however many actions a task takes.
     """
     if not transcript_path or not Path(transcript_path).is_file():
         return None
-    for raw in _lines_backward(transcript_path):
-        try:
-            entry = json.loads(raw)
-        except ValueError:
-            continue
-        if not isinstance(entry, dict) or entry.get("type") != "user":
-            continue
-        content = (entry.get("message") or {}).get("content")
-        if isinstance(content, str) and content.strip():
-            return content[-2_000:]
-        if isinstance(content, list):
-            texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            if any(t.strip() for t in texts):
-                return "\n".join(texts)[-2_000:]
-    return None
+    cache = _cache_path(session)
+    cached = _read_cache(cache, transcript_path)
+    if cached is None:
+        task = next(
+            filter(None, map(_user_text, _lines_backward(transcript_path))), None
+        )
+        offset = Path(transcript_path).stat().st_size
+    else:
+        task, offset = cached["task"], cached["offset"]
+        with open(transcript_path, "rb") as fh:
+            fh.seek(offset)
+            new = fh.read()
+        complete, _, _ = new.rpartition(
+            b"\n"
+        )  # leave a half-written line for next time
+        for line in complete.split(b"\n") if complete else []:
+            task = _user_text(line) or task
+        offset += len(complete) + (1 if complete else 0)
+    _write_cache(cache, transcript_path, task, offset)
+    return task
+
+
+def _cache_path(session: str | None) -> Path | None:
+    if not session or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session):
+        return None
+    return home() / "sessions" / f"{session}.json"
+
+
+def _read_cache(cache: Path | None, transcript_path: str) -> dict | None:
+    if cache is None or not cache.is_file():
+        return None
+    try:
+        data = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        return None
+    size = Path(transcript_path).stat().st_size
+    # A different or truncated transcript invalidates the cache.
+    if data.get("path") != transcript_path or not 0 <= data.get("offset", -1) <= size:
+        return None
+    return data
+
+
+def _write_cache(
+    cache: Path | None, transcript_path: str, task: str | None, offset: int
+) -> None:
+    if cache is None:
+        return
+    try:
+        cache.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tmp = cache.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"path": transcript_path, "offset": offset, "task": task}, fh)
+        os.replace(tmp, cache)  # atomic: a concurrent hook never reads half a file
+    except OSError:
+        pass
 
 
 def _engine():

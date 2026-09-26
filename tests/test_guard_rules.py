@@ -100,3 +100,33 @@ def test_redact_leaves_ordinary_commands_alone():
     from snapjudge.guard.rules import redact
 
     assert redact("git push origin feat/x") == "git push origin feat/x"
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        ("git push origin HEAD:refs/heads/main", "push-protected"),
+        ("psql -c 'DELETE FROM users -- clear the table'", "delete-without-where"),
+        ("sudo rm -rf /", "rm-outside-workspace"),
+        ("env FOO=1 nice -n 5 rm -rf ~/x", "rm-outside-workspace"),
+        ("git status\nrm -rf /", "rm-outside-workspace"),
+        ("echo $(rm -rf /)", "rm-outside-workspace"),
+        ("echo `rm -rf /`", "rm-outside-workspace"),
+        ("bash -c 'rm -rf /'", "rm-outside-workspace"),
+        ("eval 'git push --force'", "force-push"),
+        ("cd - && rm -rf cache", "rm-outside-workspace"),
+    ],
+)
+def test_wrapped_nested_and_multiline_forms_are_caught(command, rule):
+    hit = check_command(command, WS)
+    assert hit is not None and hit[1] == rule
+
+
+def test_where_later_in_statement_is_fine():
+    assert (
+        check_command("psql -c 'DELETE FROM users WHERE id = 1 -- one row'", WS) is None
+    )
+
+
+def test_sudo_inside_workspace_is_fine():
+    assert check_command("sudo rm -rf build", WS) is None

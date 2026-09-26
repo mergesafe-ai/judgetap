@@ -66,7 +66,7 @@ A pre-action hook for coding agents, built on the core.
   2. **Judgement** (snapjudge, ~250 ms): for everything the rules don't decide, ask: is it irreversible? is it off-task for the stated goal? does it break a rule in `AGENTS.md` / `CLAUDE.md` / `guard.md`?
 - **Outcomes**: allow (silent), hold (block with a reason the agent reads and re-plans from), ask (escalate to the user). Holds should be rare; the target is under 5 per 1,000 calls.
 - **Fails safe and visibly**: Claude Code treats a crashing hook as non-blocking, so the guard catches its own errors, applies the rules layer alone, and says so.
-- **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds, false holds and cost.
+- **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
 
 ## Non-goals (v0)
 
