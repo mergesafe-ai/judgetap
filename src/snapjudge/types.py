@@ -16,7 +16,9 @@ YES, NO = "yes", "no"
 
 
 def _as_tuple(values: object, what: str) -> tuple:
-    if isinstance(values, str) or not hasattr(values, "__iter__"):
+    # Lists and tuples only: a string would split into characters, and a set
+    # has no order, which matters for score levels and for tie-breaking.
+    if not isinstance(values, list | tuple):
         raise InvalidQuestionError(f"{what} must be a list of strings, got {values!r}")
     return tuple(values)
 

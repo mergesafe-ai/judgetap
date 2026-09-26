@@ -203,3 +203,20 @@ def test_from_config_rejects_bad_files(tmp_path, body):
     cfg.write_text(body)
     with pytest.raises(sj.SnapjudgeError):
         from_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '[cascade]\norder = ["jev"]\nescalate_below = "high"\n',
+        '[cascade]\norder = "jev"\n',
+        '[cascade]\norder = ["jev"]\nescalate_below = true\n',
+    ],
+)
+def test_from_config_type_errors_name_the_setting(tmp_path, body):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text(body)
+    with pytest.raises(sj.SnapjudgeError, match="cascade\\."):
+        from_config(cfg)

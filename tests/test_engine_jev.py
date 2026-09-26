@@ -128,3 +128,12 @@ def test_mapping_context_is_sent_as_plain_json():
     )
     state = t.requests[0][2]["state"]
     assert state["x"] == 1 and isinstance(state["when"], str)
+
+
+def test_plain_context_keeps_json_values_and_stringifies_the_rest():
+    from snapjudge.engine import plain_context
+
+    ctx = {"n": 1, "ok": True, "nested": {"xs": [1, "a", None]}, "obj": object}
+    out = plain_context(ctx)
+    assert out["nested"] == {"xs": [1, "a", None]} and out["n"] == 1
+    assert isinstance(out["obj"], str)

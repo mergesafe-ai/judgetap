@@ -57,3 +57,15 @@ def test_non_list_options_raise_invalid_question(bad):
         Question.choice("q", bad)
     with pytest.raises(InvalidQuestionError):
         Question.score("q", bad)
+
+
+@pytest.mark.parametrize("bad", ["ab", {"low", "high"}, (o for o in "ab")])
+def test_public_api_rejects_strings_sets_and_generators(bad):
+    import snapjudge as sj
+    from snapjudge.testing import StaticEngine
+
+    engine = StaticEngine(lambda q, c: {o: 1 / len(q.options) for o in q.options})
+    with pytest.raises(InvalidQuestionError):
+        sj.choice("q", bad, engine=engine)
+    with pytest.raises(InvalidQuestionError):
+        sj.score("q", bad, engine=engine)

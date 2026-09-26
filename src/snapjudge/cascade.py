@@ -174,8 +174,15 @@ def from_config(path: str | Path | None = None) -> Cascade:
         raise SnapjudgeError(
             "on_exhausted in a config file must be 'raise' or 'return_last'"
         )
+    order, threshold = table["order"], table.get("escalate_below", 0.8)
+    if not isinstance(order, list) or not all(isinstance(s, str) for s in order):
+        raise SnapjudgeError(f"{path}: cascade.order must be a list of engine specs")
+    if isinstance(threshold, bool) or not isinstance(threshold, int | float):
+        raise SnapjudgeError(
+            f"{path}: cascade.escalate_below must be a number, got {threshold!r}"
+        )
     return Cascade(
-        engines=[load(spec) for spec in table["order"]],
-        escalate_below=float(table.get("escalate_below", 0.8)),
+        engines=[load(spec) for spec in order],
+        escalate_below=float(threshold),
         on_exhausted=on_exhausted,
     )

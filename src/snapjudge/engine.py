@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -19,7 +18,18 @@ def plain_context(context: Context) -> str | dict[str, Any]:
         return ""
     if isinstance(context, str):
         return context
-    return json.loads(json.dumps(dict(context), default=str))
+    return {str(k): _plain(v) for k, v in context.items()}
+
+
+def _plain(value: Any) -> Any:
+    """JSON-native values pass through untouched; anything else becomes str."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain(v) for v in value]
+    return str(value)
 
 
 @dataclass(frozen=True)
