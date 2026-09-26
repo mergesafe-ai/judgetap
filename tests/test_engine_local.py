@@ -135,3 +135,46 @@ def test_load_local_specs():
     assert load("laya").name == "laya"
     assert load("agentjev").url == "http://127.0.0.1:8149"
     assert load("agentjev:http://gpu-box:9000/").url == "http://gpu-box:9000"
+
+
+def test_agentjev_none_context_is_empty_state():
+    sent = []
+
+    def transport(url, headers, body, timeout):
+        sent.append(json.loads(body))
+        return 200, json.dumps(agentjev_response(["0", "1", "2"])).encode()
+
+    sj.batch(QS, engine=AgentJevEngine(transport=transport))
+    assert sent[0]["state"] == ""
+
+
+def test_agentjev_numeric_level_names_are_not_indices():
+    qs = [sj.Question.score("Rate", ["1", "2", "3"])]
+    body = {
+        "results": [
+            {"answers": [{"id": "q0", "distribution": {"1": 0.1, "2": 0.2, "3": 0.7}}]}
+        ]
+    }
+    d = sj.batch(
+        qs, engine=AgentJevEngine(transport=lambda *a: (200, json.dumps(body).encode()))
+    )[0]
+    assert d.value == "3"
+
+
+def test_local_engines_async():
+    import asyncio
+
+    laya = LayaEngine(router=FakeRouter(LAYA_RESULT))
+    aj = AgentJevEngine(
+        transport=lambda *a: (
+            200,
+            json.dumps(agentjev_response(["0", "1", "2"])).encode(),
+        )
+    )
+
+    async def run():
+        return await sj.abatch(QS, engine=laya), await sj.abatch(QS, engine=aj)
+
+    a, b = asyncio.run(run())
+    assert [d.value for d in a] == ["no", "debug", "low"]
+    assert [d.value for d in b] == ["no", "debug", "high"]

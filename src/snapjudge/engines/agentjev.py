@@ -40,8 +40,14 @@ def _distribution(q: Question, answer: Mapping[str, Any]) -> dict[str, float]:
     dist = answer["distribution"]
     if q.kind == "yesno":
         return {YES: dist["true"], NO: dist["false"]}
-    if q.kind == "score" and all(str(k).isdigit() for k in dist):
-        return {q.options[int(k)]: p for k, p in dist.items()}
+    if q.kind == "score" and set(map(str, dist)) != set(q.options):
+        # Not keyed by level name, so it must be by level index. Level names
+        # are checked first because levels may themselves be numerals.
+        keys = [str(k) for k in dist]
+        if all(k.isdigit() and int(k) < len(q.options) for k in keys):
+            return {
+                q.options[int(k)]: p for k, p in zip(keys, dist.values(), strict=True)
+            }
     return dict(dist)
 
 
@@ -62,16 +68,17 @@ class AgentJevEngine:
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         ids = [f"q{i}" for i in range(len(questions))]
-        state = (
-            context
-            if isinstance(context, str)
-            else json.dumps(
+        if context is None:
+            state = ""  # same as Jev and Laya: no context is an empty state
+        elif isinstance(context, str):
+            state = context
+        else:
+            state = json.dumps(
                 dict(context) if isinstance(context, Mapping) else context, default=str
             )
-        )
         body = json.dumps(
             {
-                "state": state or "",
+                "state": state,
                 "questions": [
                     _question(i, q) for i, q in zip(ids, questions, strict=True)
                 ],

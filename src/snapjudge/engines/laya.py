@@ -3,6 +3,12 @@
 Laya takes Jev's question shapes (github.com/NandhaKishorM/laya), so the
 request is built with the Jev adapter's helpers. Needs `pip install
 'snapjudge[laya]'`; the checkpoint downloads from Hugging Face on first use.
+
+Laya depends on PyTorch, and on Linux pip picks the CUDA build by default
+(several GB). On a CPU-only machine, install the CPU wheel first:
+
+    pip install torch --index-url https://download.pytorch.org/whl/cpu
+    pip install 'snapjudge[laya]'
 """
 
 from __future__ import annotations
