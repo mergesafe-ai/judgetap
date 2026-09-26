@@ -192,7 +192,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from snapjudge.engines import load
 
     parser = argparse.ArgumentParser(
-        prog="snapjudge eval", description=__doc__.split("\n")[0]
+        prog="python -m snapjudge.evaluate", description=__doc__.split("\n")[0]
     )
     parser.add_argument("cases", help="JSONL file of labelled cases")
     parser.add_argument(
