@@ -1,0 +1,18 @@
+[project]
+name = "snapjudge"
+version = "0.0.1"
+description = "Fast typed decisions (choice, score, yes/no) across Jev-style engines, plus a guard for coding agents. Early development."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Omer Bar-Ness", email = "omer@zsquared.io" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.urls]
+Homepage = "https://github.com/mergesafe-ai/snapjudge"
