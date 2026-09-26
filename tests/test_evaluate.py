@@ -131,3 +131,21 @@ def test_cli_runs_named_engines(tmp_path, monkeypatch, capsys):
     assert main([str(write_cases(tmp_path, ROWS)), "--engines", "a,b"]) == 0
     out = capsys.readouterr().out
     assert "| a |" in out and "| b |" in out
+
+
+def test_percentile_interpolates():
+    from snapjudge.evaluate import percentile
+
+    assert percentile([10, 100], 0.5) == 55
+    assert percentile([10, 20, 30, 40], 0.95) == pytest.approx(38.5)
+    assert percentile([7], 0.95) == 7
+
+
+def test_string_options_line_is_rejected(tmp_path):
+    with pytest.raises(sj.SnapjudgeError, match="must be a JSON list"):
+        load_cases(
+            write_cases(
+                tmp_path,
+                [{"kind": "choice", "question": "q", "options": "ab", "label": "a"}],
+            )
+        )

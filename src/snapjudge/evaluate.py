@@ -58,6 +58,9 @@ def load_cases(path: str | Path) -> list[Case]:
             try:
                 raw = json.loads(line)
                 kind = raw["kind"]
+                for key in ("options", "levels"):
+                    if key in raw and not isinstance(raw[key], list):
+                        raise ValueError(f"{key} must be a JSON list")
                 if kind == "yesno":
                     q = Question.yesno(raw["question"])
                 elif kind == "choice":
@@ -79,8 +82,12 @@ def load_cases(path: str | Path) -> list[Case]:
     return cases
 
 
-def _percentile(sorted_values: Sequence[float], q: float) -> float:
-    return sorted_values[min(len(sorted_values) - 1, int(q * len(sorted_values)))]
+def percentile(sorted_values: Sequence[float], q: float) -> float:
+    """Linear interpolation between closest ranks (numpy's default)."""
+    pos = q * (len(sorted_values) - 1)
+    lo = math.floor(pos)
+    hi = min(lo + 1, len(sorted_values) - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
 
 
 def evaluate(cases: Sequence[Case], engine: Engine) -> EngineReport:
@@ -107,8 +114,8 @@ def evaluate(cases: Sequence[Case], engine: Engine) -> EngineReport:
     report.ece, report.reliability = _calibration(hits)
     latencies.sort()
     report.p50_ms, report.p95_ms = (
-        _percentile(latencies, 0.5),
-        _percentile(latencies, 0.95),
+        percentile(latencies, 0.5),
+        percentile(latencies, 0.95),
     )
     if None not in costs:
         report.usd_per_1k = 1000 * sum(costs) / len(costs)
