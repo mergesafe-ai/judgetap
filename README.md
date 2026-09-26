@@ -21,6 +21,8 @@ verdict.p  # 0.97
 verdict.engine  # "jev"
 ```
 
+Local engines: `sj.engines.load("laya")` runs Laya in process (`pip install "snapjudge[laya]"`; on a CPU-only Linux box install the CPU PyTorch wheel first with `pip install torch --index-url https://download.pytorch.org/whl/cpu`, or pip pulls the multi-GB CUDA build). `sj.engines.load("agentjev")` talks to a local AgentJev server.
+
 - **Adapters**: Jev, local open-weights models (Laya, AgentJev), and any structured-output LLM (OpenAI, Gemini, Anthropic, Ollama).
 - **Cascade**: ask the cheap, fast engine first; send low-confidence answers to a stronger one, or to a human.
 - **Calibration check**: run your labelled examples through every engine and compare accuracy, calibration, speed and cost.
