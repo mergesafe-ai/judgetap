@@ -123,7 +123,7 @@ async def abatch(
 
 def choice(
     text: str,
-    options: Sequence[str],
+    options: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
@@ -133,7 +133,7 @@ def choice(
 
 def score(
     text: str,
-    levels: Sequence[str],
+    levels: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
@@ -149,7 +149,7 @@ def yesno(
 
 async def achoice(
     text: str,
-    options: Sequence[str],
+    options: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,
@@ -159,7 +159,7 @@ async def achoice(
 
 async def ascore(
     text: str,
-    levels: Sequence[str],
+    levels: list[str] | tuple[str, ...],
     context: Context = None,
     *,
     engine: Engine | None = None,

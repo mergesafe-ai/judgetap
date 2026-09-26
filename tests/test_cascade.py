@@ -220,3 +220,12 @@ def test_from_config_type_errors_name_the_setting(tmp_path, body):
     cfg.write_text(body)
     with pytest.raises(sj.SnapjudgeError, match="cascade\\."):
         from_config(cfg)
+
+
+def test_from_config_scalar_cascade_is_a_config_error(tmp_path):
+    from snapjudge.cascade import from_config
+
+    cfg = tmp_path / "snapjudge.toml"
+    cfg.write_text('cascade = "jev"\n')
+    with pytest.raises(sj.SnapjudgeError):
+        from_config(cfg)

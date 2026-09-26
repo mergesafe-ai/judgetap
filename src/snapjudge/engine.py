@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -23,6 +24,8 @@ def plain_context(context: Context) -> str | dict[str, Any]:
 
 def _plain(value: Any) -> Any:
     """JSON-native values pass through untouched; anything else becomes str."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)  # NaN / Infinity are not valid JSON
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, Mapping):

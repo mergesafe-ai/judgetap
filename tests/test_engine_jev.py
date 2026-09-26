@@ -137,3 +137,13 @@ def test_plain_context_keeps_json_values_and_stringifies_the_rest():
     out = plain_context(ctx)
     assert out["nested"] == {"xs": [1, "a", None]} and out["n"] == 1
     assert isinstance(out["obj"], str)
+
+
+def test_plain_context_stringifies_non_finite_floats():
+    import json as _json
+
+    from snapjudge.engine import plain_context
+
+    out = plain_context({"a": float("nan"), "b": [float("inf")]})
+    _json.dumps(out, allow_nan=False)  # strict JSON
+    assert out == {"a": "nan", "b": ["inf"]}

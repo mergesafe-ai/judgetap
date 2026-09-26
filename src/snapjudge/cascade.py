@@ -161,13 +161,16 @@ def from_config(path: str | Path | None = None) -> Cascade:
     order = ["jev", "llm:gemini/gemini-2.0-flash-lite"]
     escalate_below = 0.8
     on_exhausted = "raise"        # or "return_last"
+
+    A callback for on_exhausted can't be written in TOML; set it in code
+    with `Cascade(..., on_exhausted=fn)` or `replace(from_config(), on_exhausted=fn)`.
     """
     from snapjudge.engines import load
 
     path = Path(path or CONFIG_FILE)
     with path.open("rb") as fh:
         table = tomllib.load(fh).get("cascade")
-    if not table or not table.get("order"):
+    if not isinstance(table, dict) or not table.get("order"):
         raise SnapjudgeError(f"{path} has no [cascade] table with an order list")
     on_exhausted = table.get("on_exhausted", "raise")
     if on_exhausted not in ("raise", "return_last"):
