@@ -12,6 +12,7 @@ dependencies = []
 
 [project.optional-dependencies]
 llm = ["litellm>=1.40"]
+laya = ["laya"]
 
 [build-system]
 requires = ["hatchling"]

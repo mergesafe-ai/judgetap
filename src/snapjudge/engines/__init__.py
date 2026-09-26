@@ -33,7 +33,17 @@ def load(spec: str | None = None) -> Engine:
         from snapjudge.engines.llm import LLMEngine
 
         return LLMEngine(model=arg)
-    raise SnapjudgeError(f"unknown engine {name!r} in spec {spec!r}; known: jev, llm")
+    if name == "laya":
+        from snapjudge.engines.laya import DEFAULT_MODEL, LayaEngine
+
+        return LayaEngine(model=arg or DEFAULT_MODEL)
+    if name == "agentjev":
+        from snapjudge.engines.agentjev import DEFAULT_URL, AgentJevEngine
+
+        return AgentJevEngine(url=arg or DEFAULT_URL)
+    raise SnapjudgeError(
+        f"unknown engine {name!r} in spec {spec!r}; known: jev, llm, laya, agentjev"
+    )
 
 
 __all__ = ["ENV_VAR", "load"]
