@@ -20,7 +20,19 @@ def load(spec: str | None = None) -> Engine:
     spec = spec or os.environ.get(ENV_VAR)
     if not spec:
         raise SnapjudgeError(f"no engine spec given and ${ENV_VAR} is not set")
+    if spec.startswith("jev@"):
+        from snapjudge.engines.jev import JevEngine
+
+        return JevEngine(base_url=spec[len("jev@") :])
     name, _, arg = spec.partition(":")
+    if name == "typesafe":
+        if not arg:
+            raise SnapjudgeError(
+                "typesafe engine needs a URL, e.g. typesafe:http://127.0.0.1:8000"
+            )
+        from snapjudge.engines.jev import JevEngine
+
+        return JevEngine(base_url=arg)
     if name == "jev":
         from snapjudge.engines.jev import JevEngine
 
@@ -42,7 +54,7 @@ def load(spec: str | None = None) -> Engine:
 
         return AgentJevEngine(url=arg or DEFAULT_URL)
     raise SnapjudgeError(
-        f"unknown engine {name!r} in spec {spec!r}; known: jev, llm, laya, agentjev"
+        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev"
     )
 
 
