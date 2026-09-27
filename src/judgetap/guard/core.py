@@ -99,6 +99,10 @@ def load_user_rules(path: Path, *, trusted: bool = True) -> list[UserRule]:
         return []
     with path.open("rb") as fh:
         data = tomllib.load(fh)
+    return _rules_from(data, path, trusted)
+
+
+def _rules_from(data: dict, path: Path, trusted: bool) -> list[UserRule]:
     rules = []
     for entry in data.get("rule", []):
         outcome = entry.get("outcome", "hold")
@@ -227,6 +231,22 @@ def project_rules(cwd: Path) -> str | None:
         if (directory / ".git").exists():
             break
     return None
+
+
+def load_rules_counting_allows(
+    path: Path, *, trusted: bool = True
+) -> tuple[list[UserRule], int]:
+    """load_user_rules plus how many `allow` rules were dropped, from one
+    parse of the file (the hook calls this on every action)."""
+    if not path.is_file():
+        return [], 0
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+    return _rules_from(data, path, trusted), (
+        0
+        if trusted
+        else sum(1 for e in data.get("rule", []) if e.get("outcome", "hold") == "allow")
+    )
 
 
 def dropped_allows(path: Path) -> int:

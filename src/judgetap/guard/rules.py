@@ -922,6 +922,8 @@ def check_path(
 GUARD_CONFIG_MENTION = re.compile(
     r"(?:guard\.toml|\.claude/settings[^\s'\"/]*\.json|\.cursor/hooks\.json"
     r"|\.codex/hooks\.json|\.codex/config\.toml)"
+    # A whole name: guard.toml.example or settings.json.bak is another file.
+    r"(?![\w.-])"
 )
 
 
