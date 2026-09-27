@@ -16,16 +16,33 @@ def _home(tmp_path, monkeypatch):
 def call(
     command, *, fail=True, err="npm ERR! missing script: build", session="s1", code=1
 ):
-    payload = {
+    """A documented Claude Code payload: failures on PostToolUseFailure with a
+    top-level `error` ("Exit code N" first line for Bash), successes on
+    PostToolUse with a tool_response."""
+    base = {
         "session_id": session,
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": "/tmp",
+        "permission_mode": "default",
         "tool_name": "Bash",
-        "tool_input": {"command": command},
-        "tool_response": {
-            "stdout": "",
-            "stderr": err if fail else "",
-            "exit_code": code if fail else 0,
-        },
+        "tool_input": {"command": command, "description": "run"},
+        "tool_use_id": "toolu_01ABC",
     }
+    if fail:
+        payload = {
+            **base,
+            "hook_event_name": "PostToolUseFailure",
+            "error": f"Exit code {code}\n{err}",
+            "is_interrupt": False,
+            "duration_ms": 10,
+        }
+    else:
+        payload = {
+            **base,
+            "hook_event_name": "PostToolUse",
+            "tool_response": {"stdout": "ok", "stderr": "", "interrupted": False},
+            "duration_ms": 10,
+        }
     out = io.StringIO()
     assert loop.run(io.StringIO(json.dumps(payload)), out) == 0
     return json.loads(out.getvalue()) if out.getvalue() else None
@@ -36,7 +53,7 @@ def test_third_identical_failure_adds_a_note():
     assert call("npm run build") is None
     out = call("npm run build")
     ctx = out["hookSpecificOutput"]
-    assert ctx["hookEventName"] == "PostToolUse"
+    assert ctx["hookEventName"] == "PostToolUseFailure"
     assert (
         "`npm run build` has now failed the same way 3 times"
         in ctx["additionalContext"]
@@ -225,3 +242,73 @@ def test_concurrent_hooks_do_not_lose_actions(tmp_path, monkeypatch):
     for t in threads:
         t.join()
     assert len(real_load(tmp_path / "sessions" / "race.json")) == 6
+
+
+DOC_FAILURE = {
+    # Verbatim from code.claude.com/docs/en/hooks#posttoolusefailure-input
+    "session_id": "abc123",
+    "transcript_path": "/Users/.../.claude/projects/.../00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+    "cwd": "/Users/...",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "Bash",
+    "tool_input": {"command": "npm test", "description": "Run test suite"},
+    "tool_use_id": "toolu_01ABC123...",
+    "error": "Exit code 1\nError: Cannot find module 'express'",
+    "is_interrupt": False,
+    "duration_ms": 4187,
+}
+
+
+def test_documented_failure_payload_triggers_on_the_third_repeat():
+    outs = [loop.handle(dict(DOC_FAILURE)) for _ in range(3)]
+    assert outs[:2] == [None, None]
+    assert outs[2]["hookSpecificOutput"]["hookEventName"] == "PostToolUseFailure"
+
+
+def test_interrupts_are_not_loop_signals():
+    for _ in range(4):
+        assert loop.handle({**DOC_FAILURE, "is_interrupt": True}) is None
+
+
+def test_install_adds_post_tool_use_failure_and_upgrades_old_installs(tmp_path):
+    path = tmp_path / "settings.json"
+    old = {
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": POST_COMMAND}],
+                }
+            ]
+        }
+    }
+    path.write_text(json.dumps(old))
+    assert install(path) is True
+    hooks = json.loads(path.read_text())["hooks"]
+    assert POST_COMMAND in json.dumps(hooks["PostToolUseFailure"])
+    assert install(path) is False
+    assert uninstall(path) is True
+    assert "PostToolUseFailure" not in json.loads(path.read_text()).get("hooks", {})
+
+
+def test_prune_sessions_removes_old_state_once_an_hour(tmp_path):
+    import os
+
+    d = tmp_path / "sessions"
+    d.mkdir()
+    old, fresh = d / "a.json", d / "b.json"
+    old.write_text("[]")
+    fresh.write_text("[]")
+    now = 10_000_000.0
+    os.utime(old, (now - 8 * 86400, now - 8 * 86400))
+    os.utime(fresh, (now - 60, now - 60))
+    loop.prune_sessions(d, now=now)
+    assert not old.exists() and fresh.exists()
+    stale = d / "c.lock"
+    stale.write_text("")
+    os.utime(stale, (now - 9 * 86400, now - 9 * 86400))
+    loop.prune_sessions(d, now=now + 60)  # within the hour: no sweep
+    assert stale.exists()
+    loop.prune_sessions(d, now=now + 3700)
+    assert not stale.exists()

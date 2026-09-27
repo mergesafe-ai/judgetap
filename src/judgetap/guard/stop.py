@@ -113,6 +113,9 @@ def _count_path(session: str) -> Path:
 def _take_block(session: str) -> bool:
     """Count one block for this session; False once the cap is reached."""
     path = _count_path(session)
+    from judgetap.guard.loop import prune_sessions
+
+    prune_sessions(path.parent)
     with _session_lock(path):
         try:
             count = int(path.read_text().strip() or 0)
@@ -177,6 +180,11 @@ def handle(payload: dict[str, Any], engine=None) -> dict[str, Any] | None:
         return None  # needs a judge: no rules-only behaviour here
     transcript = payload.get("transcript_path")
     task, said = task_and_reply(transcript)
+    # Claude Code passes the final reply directly: the transcript is written
+    # asynchronously and may not contain it yet at Stop time.
+    last = payload.get("last_assistant_message")
+    if isinstance(last, str) and last.strip():
+        said = last[-ASSISTANT_TAIL_CHARS:]
     if not task or not said:
         _log(
             session,
