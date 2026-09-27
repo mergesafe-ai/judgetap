@@ -74,28 +74,36 @@ def _assistant_text(raw: bytes) -> str | None:
     return None
 
 
-def last_assistant_text(
+def task_and_reply(
     transcript_path: str | None, limit: int = ASSISTANT_TAIL_CHARS
-) -> str | None:
-    """The newest assistant text, newest-last, at most `limit` characters,
-    read from the same bounded window as the user's task."""
+) -> tuple[str | None, str | None]:
+    """(the user's latest task, what the assistant said since), from one
+    read of the bounded transcript window. The reply is newest-last and at
+    most `limit` characters."""
     if not transcript_path or not Path(transcript_path).is_file():
-        return None
+        return None, None
     hook = _hook()
     parts: list[str] = []
-    size = 0
+    size, task = 0, None
     for raw in hook._lines_backward(transcript_path, hook.TRANSCRIPT_SCAN_BYTES):
-        if hook._user_text(raw):
+        task = hook._user_text(raw)
+        if task:
             break  # only what the assistant said since the user's last turn
+        if size >= limit:
+            continue  # enough reply text: keep scanning only for the task
         text = _assistant_text(raw)
         if text:
             parts.append(text)
             size += len(text)
-            if size >= limit:
-                break
-    if not parts:
-        return None
-    return "\n".join(reversed(parts))[-limit:]
+    reply = "\n".join(reversed(parts))[-limit:] if parts else None
+    return task, reply
+
+
+def last_assistant_text(
+    transcript_path: str | None, limit: int = ASSISTANT_TAIL_CHARS
+) -> str | None:
+    """What the assistant said since the user's last turn (see task_and_reply)."""
+    return task_and_reply(transcript_path, limit)[1]
 
 
 def _count_path(session: str) -> Path:
@@ -161,8 +169,7 @@ def handle(payload: dict[str, Any], engine=None) -> dict[str, Any] | None:
     if engine is None:
         return None  # needs a judge: no rules-only behaviour here
     transcript = payload.get("transcript_path")
-    task = _hook().last_user_message(transcript)
-    said = last_assistant_text(transcript)
+    task, said = task_and_reply(transcript)
     if not task or not said:
         _log(
             session,
