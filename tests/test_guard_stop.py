@@ -212,3 +212,40 @@ def test_failed_judge_logs_its_calls_and_lets_the_agent_stop(tmp_path, monkeypat
         is None
     )
     assert load(tmp_path)["summary"]["engines"]["low"]["calls"] == 1
+
+
+def test_stop_uses_last_assistant_message_when_the_transcript_lags(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from judgetap.guard import stop
+    from judgetap.testing import StaticEngine
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user", "message": {"content": "Fix all 3 failing tests"}})
+        + "\n"
+    )
+    seen = []
+
+    def judge(q, ctx):
+        seen.append(ctx["assistant_last_message"])
+        return {"yes": 0.05, "no": 0.95}
+
+    # The documented Stop input: the final reply comes in last_assistant_message.
+    payload = {
+        "session_id": "abc123",
+        "transcript_path": str(t),
+        "cwd": "/tmp",
+        "permission_mode": "default",
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "last_assistant_message": "I fixed one test; two remain, stopping.",
+        "background_tasks": [],
+        "session_crons": [],
+    }
+    out = stop.handle(payload, engine=StaticEngine(judge, name="j"))
+    assert seen == ["I fixed one test; two remain, stopping."]
+    assert out["decision"] == "block"
