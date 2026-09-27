@@ -186,12 +186,24 @@ def handle(payload: dict[str, Any], engine=None) -> dict[str, Any] | None:
             getattr(engine, "name", None),
         )
         return None
-    decision = batch(
-        [QUESTION],
-        {"user_task": task, "assistant_last_message": said},
-        engine=engine,
-        log=False,
-    )[0]
+    try:
+        decision = batch(
+            [QUESTION],
+            {"user_task": task, "assistant_last_message": said},
+            engine=engine,
+            log=False,
+        )[0]
+    except Exception as err:  # noqa: BLE001 -- a failed judge lets the agent stop
+        # Record the calls the engine did make, then fail open.
+        _log(
+            session,
+            "skip",
+            f"judge failed: {type(err).__name__}",
+            None,
+            getattr(engine, "name", None),
+            getattr(err, "calls", ()),
+        )
+        return None
     p_done = decision.p_yes
     if p_done > threshold():
         _log(session, "allow", "looks done", p_done, decision.engine, decision.calls)
