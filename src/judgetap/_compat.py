@@ -14,8 +14,11 @@ OLD_PREFIX, NEW_PREFIX = "SNAPJUDGE_", "JUDGETAP_"
 
 
 def env(name: str) -> str | None:
-    """$JUDGETAP_<name>, else the old $SNAPJUDGE_<name>."""
-    return os.environ.get(NEW_PREFIX + name) or os.environ.get(OLD_PREFIX + name)
+    """$JUDGETAP_<name>, else the old $SNAPJUDGE_<name>. The new name wins
+    whenever it is set, even to an empty string (which reads as unset)."""
+    if NEW_PREFIX + name in os.environ:
+        return os.environ[NEW_PREFIX + name] or None
+    return os.environ.get(OLD_PREFIX + name) or None
 
 
 def default_home() -> Path:
@@ -26,7 +29,6 @@ def default_home() -> Path:
 
 def env_source(name: str) -> str | None:
     """Which variable `env(name)` read: '$JUDGETAP_<name>' or '$SNAPJUDGE_<name>'."""
-    for prefix in (NEW_PREFIX, OLD_PREFIX):
-        if os.environ.get(prefix + name):
-            return f"${prefix}{name}"
-    return None
+    if NEW_PREFIX + name in os.environ:  # set, even empty: the old name is ignored
+        return f"${NEW_PREFIX}{name}" if os.environ[NEW_PREFIX + name] else None
+    return f"${OLD_PREFIX}{name}" if os.environ.get(OLD_PREFIX + name) else None

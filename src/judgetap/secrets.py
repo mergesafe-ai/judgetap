@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import os
 
+# Keys an engine reads through get_key. Saving any other name to the keychain
+# would store something nothing reads.
+KNOWN_KEYS = ("TYPESAFE_API_KEY",)
 SERVICE = "judgetap"
 OLD_SERVICE = "snapjudge"  # keys saved before the rename (#38)
 

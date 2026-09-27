@@ -190,7 +190,7 @@ def _dashboard(args) -> int:
     from judgetap.guard.hook import home
 
     server = serve(home(), args.port)
-    url = f"http://127.0.0.1:{args.port}/"
+    url = f"http://127.0.0.1:{server.server_address[1]}/"  # the bound port (--port 0)
     print(f"judgetap dashboard on {url} (Ctrl+C to stop); reading {home()}")
     if not args.no_browser:
         webbrowser.open(url)
@@ -238,8 +238,14 @@ def _offer_keychain(stdin=None) -> None:
 def _keys_set(args) -> int:
     import getpass
 
-    from judgetap.secrets import set_key
+    from judgetap.secrets import KNOWN_KEYS, set_key
 
+    if args.name not in KNOWN_KEYS:
+        print(
+            f"{args.name} isn't read by any engine; known keys: {', '.join(KNOWN_KEYS)}."
+        )
+        print("The llm engine reads its provider's key from the environment only.")
+        return 2
     value = getpass.getpass(f"{args.name}: ")  # never echoed, never in argv
     if not value:
         print("Nothing entered; not saved.")
@@ -254,9 +260,15 @@ def _keys_set(args) -> int:
 
 
 def _keys_status(args) -> int:
-    from judgetap.secrets import key_source
+    from judgetap.secrets import KNOWN_KEYS, key_source
 
-    for name in args.names or ["TYPESAFE_API_KEY"]:
+    unknown = [n for n in args.names if n not in KNOWN_KEYS]
+    if unknown:
+        print(
+            f"Not read by any engine: {', '.join(unknown)}; known keys: {', '.join(KNOWN_KEYS)}."
+        )
+        return 2
+    for name in args.names or KNOWN_KEYS:
         print(f"{name}: {key_source(name) or 'not set'}")
     return 0
 
