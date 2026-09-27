@@ -65,6 +65,10 @@ function tiles(s) {
 }
 function days(perDay) {
   const entries = Object.entries(perDay);
+  if (entries.every(([, c]) => !((c.allow||0) + (c.ask||0) + (c.hold||0)))) {
+    $("days").innerHTML = '<span class="muted">No guarded calls in the last 30 days.</span>';
+    return;
+  }
   const max = Math.max(1, ...entries.map(([, c]) => (c.allow||0) + (c.ask||0) + (c.hold||0)));
   $("days").innerHTML = entries.map(([d, c]) => {
     const seg = (k) => `<i class="${k}" style="height:${(80 * (c[k]||0) / max).toFixed(1)}px"></i>`;
