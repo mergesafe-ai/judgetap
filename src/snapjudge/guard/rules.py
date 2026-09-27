@@ -395,6 +395,10 @@ def _custom_push_config(cwd: Path) -> bool:
     except OSError:
         return True  # can't read it: assume the worst
     config = "\n".join(texts)
+    # [include]/[includeIf] pull in files we don't follow: their push
+    # settings are unknown, so the destination is uncertain.
+    if re.search(r"^\s*\[include(if)?\b", config, re.MULTILINE | re.IGNORECASE):
+        return True
     if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
         return True
     effective = None
@@ -514,7 +518,7 @@ def _push_rule(
                 return (
                     "ask",
                     "push-implicit",
-                    "repo config rewrites where a plain push goes",
+                    "git config (repo, global or system) changes where a plain push goes",
                 )
             upstream = upstream_branch(cwd, branch) if spec == "HEAD" else None
             protected = [b for b in (branch, upstream) if b in PROTECTED_BRANCHES]

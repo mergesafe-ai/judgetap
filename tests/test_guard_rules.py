@@ -453,3 +453,17 @@ def test_effective_push_default_across_scopes(tmp_path, monkeypatch):
     # A repo value overrides the global one.
     (repo / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
     assert check_command("git push", repo) is None
+
+
+def test_included_config_makes_push_uncertain(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    glob = tmp_path / "gitconfig"
+    glob.write_text('[includeIf "gitdir:~/work/"]\n\tpath = ~/.gitconfig-work\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    hit = check_command("git push", repo)
+    assert hit[:2] == ("ask", "push-implicit") and "repo, global or system" in hit[2]
