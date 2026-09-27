@@ -411,3 +411,81 @@ def test_push_config_we_do_not_model_asks(tmp_path):
     assert check_command("git push", tmp_path)[:2] == ("ask", "push-implicit")
     (tmp_path / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
     assert check_command("git push", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "command", ["git clean -fdx", "git clean -dxf", "git clean -d -f"]
+)
+def test_combined_clean_flags(command):
+    from snapjudge.guard.rules import rules_only_check
+
+    hit = check_command(command, WS) or rules_only_check(command)
+    assert hit is not None and hit[0] in ("ask", "hold")
+
+
+def test_global_push_default_is_honoured(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    glob = tmp_path / "gitconfig"
+    glob.write_text("[push]\n\tdefault = matching\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
+    glob.write_text("[push]\n\tdefault = simple\n")
+    assert check_command("git push", repo) is None
+
+
+def test_effective_push_default_across_scopes(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    glob = tmp_path / "gitconfig"
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # Repo [push] without a default must not hide the global one.
+    (repo / ".git" / "config").write_text("[push]\n\tautoSetupRemote = true\n")
+    glob.write_text("[push]\n\tdefault = matching\n")
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
+    # A repo value overrides the global one.
+    (repo / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
+    assert check_command("git push", repo) is None
+
+
+def test_included_config_makes_push_uncertain(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    glob = tmp_path / "gitconfig"
+    glob.write_text('[includeIf "gitdir:~/work/"]\n\tpath = ~/.gitconfig-work\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    hit = check_command("git push", repo)
+    assert hit[:2] == ("ask", "push-implicit") and "repo, global or system" in hit[2]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "[Push]\n\tdefault = matching\n",
+        "[PUSH]\n\tDefault = matching\n",
+        "[remote]\n\tpushDefault = production\n[push]\n\tdefault = current\n",
+    ],
+)
+def test_push_config_case_and_remote_pushdefault(tmp_path, monkeypatch, config):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text(config)
+    for var, val in (
+        ("GIT_CONFIG_GLOBAL", "g"),
+        ("GIT_CONFIG_SYSTEM", "s"),
+        ("XDG_CONFIG_HOME", "x"),
+    ):
+        monkeypatch.setenv(var, str(tmp_path / val))
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")

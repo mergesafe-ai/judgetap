@@ -49,6 +49,10 @@ Early development. See [docs/SPEC.md](docs/SPEC.md) for the design and the issue
 
 Built in the open, with every pull request reviewed by [MergeSafe](https://mergesafe.ai).
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Every PR is reviewed by MergeSafe.
+
 ## License
 
 Apache-2.0

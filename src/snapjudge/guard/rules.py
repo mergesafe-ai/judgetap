@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections.abc import Callable
@@ -66,7 +67,7 @@ COMMAND_RULES: tuple[Rule, ...] = (
     ),
     _r(
         "git-clean",
-        r"\bgit\s+clean\s+-\w*f",
+        r"\bgit\s+clean\s+(-\w*\s+)*-\w*f",
         "ask",
         "git clean -f deletes untracked files",
     ),
@@ -361,32 +362,64 @@ def upstream_branch(cwd: Path, branch: str) -> str | None:
     return merge.group(1).removeprefix("refs/heads/") if merge else None
 
 
+def _global_configs() -> list[Path]:
+    """Existing system, XDG and global config files, lowest precedence first."""
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    candidates = [
+        os.environ.get("GIT_CONFIG_SYSTEM") or "/etc/gitconfig",
+        str(Path(xdg) / "git" / "config"),
+        os.environ.get("GIT_CONFIG_GLOBAL") or str(Path.home() / ".gitconfig"),
+    ]
+    return [Path(c) for c in candidates if Path(c).is_file()]
+
+
 def _custom_push_config(cwd: Path) -> bool:
-    """True when .git/config sets anything that changes where a plain push
-    goes beyond current/upstream: remote push refspecs, pushRemote, or a
-    push.default other than simple/current/upstream."""
+    """True when git config sets anything that changes where a plain push
+    goes beyond current/upstream: remote push refspecs, pushRemote, or an
+    effective push.default other than simple/current/upstream.
+
+    Scopes are read lowest precedence first (system, XDG, global, repo) and
+    every [push] section is scanned, so the last `default` wins as in git.
+    """
     dirs = _git_dirs(cwd)
     if dirs is None:
         return False
+    texts = []
+    for path in _global_configs():
+        try:
+            texts.append(path.read_text(errors="replace"))
+        except OSError:
+            continue
     try:
-        config = (dirs[1] / "config").read_text(errors="replace")
+        texts.append((dirs[1] / "config").read_text(errors="replace"))
     except OSError:
         return True  # can't read it: assume the worst
-    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
+    config = "\n".join(texts)
+    # [include]/[includeIf] pull in files we don't follow: their push
+    # settings are unknown, so the destination is uncertain.
+    if re.search(r"^\s*\[include(if)?\b", config, re.MULTILINE | re.IGNORECASE):
         return True
-    default = re.search(r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL)
-    if default:
-        mode = re.search(
-            r"^\s*default\s*=\s*(\S+)", default.group(1), re.MULTILINE | re.IGNORECASE
-        )
-        if mode and mode.group(1).lower() not in (
-            "simple",
-            "current",
-            "upstream",
-            "tracking",
+    if re.search(
+        r"^\s*(push|pushremote|pushdefault)\s*=", config, re.MULTILINE | re.IGNORECASE
+    ):
+        return True
+    effective = None
+    for section in re.finditer(
+        # Section names are case-insensitive in git: [Push], [PUSH].
+        r"^\s*\[push\](.*?)(?=^\s*\[|\Z)",
+        config,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    ):
+        for mode in re.finditer(
+            r"^\s*default\s*=\s*(\S+)", section.group(1), re.MULTILINE | re.IGNORECASE
         ):
-            return True
-    return False
+            effective = mode.group(1).lower()
+    return effective is not None and effective not in (
+        "simple",
+        "current",
+        "upstream",
+        "tracking",
+    )
 
 
 def current_branch(cwd: Path) -> str | None:
@@ -464,7 +497,7 @@ def _push_rule(
                 return (
                     "ask",
                     "push-implicit",
-                    "repo config rewrites where a plain push goes",
+                    "git config (repo, global or system) changes where a plain push goes",
                 )
             upstream = upstream_branch(cwd, branch) if spec == "HEAD" else None
             protected = [b for b in (branch, upstream) if b in PROTECTED_BRANCHES]
@@ -709,7 +742,14 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
             i = progs.index("git")
             sub = next((a for a in argv[i + 1 :] if not a.startswith("-")), None)
             args = set(argv[i + 1 :])
-            if sub not in SAFE_GIT or args & DESTRUCTIVE_GIT_ARGS:
+            # Short flags may be combined (-fdx): compare letter by letter.
+            letters = {
+                f"-{c}"
+                for a in args
+                if a.startswith("-") and not a.startswith("--")
+                for c in a[1:]
+            }
+            if sub not in SAFE_GIT or (args | letters) & DESTRUCTIVE_GIT_ARGS:
                 return "ask", "rules-only", f"no engine configured to judge 'git {sub}'"
     return None
 

@@ -29,9 +29,12 @@ def _agents(args) -> list[str]:
 
 
 def _guard_install(args) -> int:
+    from snapjudge.guard.hook import home, saved_engine
     from snapjudge.guard.install import (
+        detect_engine,
         install,
         settings_path,
+        write_engine,
     )
 
     for agent in _agents(args):
@@ -40,10 +43,33 @@ def _guard_install(args) -> int:
         print(f"{agent}: {'installed' if added else 'already installed'} in {path}")
         if agent == "codex":
             print("  codex: review and trust the new hook with /hooks before it runs.")
-    print(
-        "Engine: set SNAPJUDGE_ENGINE (e.g. 'jev' with TYPESAFE_API_KEY) for judgements;"
-    )
-    print("without it the guard runs its rules only, which ask when unsure.")
+    existing = saved_engine()  # the file, not the env: hooks may not see the env
+    if existing and not args.detect:
+        # A chosen engine is kept; re-detection only when asked for.
+        print(f"Engine: keeping {existing} (re-detect with --detect).")
+    else:
+        spec, why = detect_engine()
+        if spec:
+            try:
+                saved = write_engine(home(), spec)
+            except ValueError as err:
+                print(f"Engine: not saved ({err}).")
+            else:
+                print(f"Engine: {spec} ({why}); saved to {saved}")
+                if spec.startswith("jev"):
+                    print(
+                        "  Jev reads TYPESAFE_API_KEY at hook time: make sure the agent's"
+                    )
+                    print(
+                        "  environment has it, or the guard falls back to rules only."
+                    )
+        else:
+            print(f"Engine: none ({why}).")
+            print(
+                "  For judgements: export TYPESAFE_API_KEY, or start an AgentJev server,"
+            )
+            print('  then run this install again; or set engine = "llm:<model>" in')
+            print("  ~/.snapjudge/guard.toml.")
     print("Check with: snapjudge guard test")
     return 0
 
@@ -162,6 +188,9 @@ def _dashboard(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="snapjudge")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser(
+        "eval", help="compare engines on labelled cases (snapjudge eval --help)"
+    )
     dash = sub.add_parser("dashboard", help="local page over the guard log")
     dash.add_argument("--port", type=int, default=8765)
     dash.add_argument("--no-browser", action="store_true", help="don't open a browser")
@@ -182,6 +211,12 @@ def main(argv: list[str] | None = None) -> int:
             default="claude-code",
         )
         p.add_argument("--scope", choices=["user", "project"], default="user")
+        if name == "install":
+            p.add_argument(
+                "--detect",
+                action="store_true",
+                help="re-detect the engine even if one is saved",
+            )
         p.set_defaults(func=func)
     t = gsub.add_parser("test", help="run sample commands through the guard")
     t.add_argument("command", nargs="?", help="a command of your own to check")
@@ -189,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
     gsub.add_parser("stats", help="summarise the guard log").set_defaults(
         func=_guard_stats
     )
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["eval"]:  # its own argparse, so its --help and flags pass through
+        from snapjudge.evaluate import main as eval_main
+
+        return eval_main(argv[1:])
     args = parser.parse_args(argv)
     return args.func(args)
 
