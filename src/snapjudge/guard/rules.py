@@ -399,11 +399,16 @@ def _custom_push_config(cwd: Path) -> bool:
     # settings are unknown, so the destination is uncertain.
     if re.search(r"^\s*\[include(if)?\b", config, re.MULTILINE | re.IGNORECASE):
         return True
-    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
+    if re.search(
+        r"^\s*(push|pushremote|pushdefault)\s*=", config, re.MULTILINE | re.IGNORECASE
+    ):
         return True
     effective = None
     for section in re.finditer(
-        r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL
+        # Section names are case-insensitive in git: [Push], [PUSH].
+        r"^\s*\[push\](.*?)(?=^\s*\[|\Z)",
+        config,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
     ):
         for mode in re.finditer(
             r"^\s*default\s*=\s*(\S+)", section.group(1), re.MULTILINE | re.IGNORECASE
@@ -415,32 +420,6 @@ def _custom_push_config(cwd: Path) -> bool:
         "upstream",
         "tracking",
     )
-    try:
-        config = (dirs[1] / "config").read_text(errors="replace")
-    except OSError:
-        return True  # can't read it: assume the worst
-    # Global and system config apply too (a repo value overrides them, but
-    # anything set there is enough to make the destination uncertain).
-    for path in _global_configs():
-        try:
-            config += "\n" + path.read_text(errors="replace")
-        except OSError:
-            continue
-    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
-        return True
-    default = re.search(r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL)
-    if default:
-        mode = re.search(
-            r"^\s*default\s*=\s*(\S+)", default.group(1), re.MULTILINE | re.IGNORECASE
-        )
-        if mode and mode.group(1).lower() not in (
-            "simple",
-            "current",
-            "upstream",
-            "tracking",
-        ):
-            return True
-    return False
 
 
 def current_branch(cwd: Path) -> str | None:

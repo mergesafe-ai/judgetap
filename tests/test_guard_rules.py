@@ -467,3 +467,25 @@ def test_included_config_makes_push_uncertain(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     hit = check_command("git push", repo)
     assert hit[:2] == ("ask", "push-implicit") and "repo, global or system" in hit[2]
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "[Push]\n\tdefault = matching\n",
+        "[PUSH]\n\tDefault = matching\n",
+        "[remote]\n\tpushDefault = production\n[push]\n\tdefault = current\n",
+    ],
+)
+def test_push_config_case_and_remote_pushdefault(tmp_path, monkeypatch, config):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text(config)
+    for var, val in (
+        ("GIT_CONFIG_GLOBAL", "g"),
+        ("GIT_CONFIG_SYSTEM", "s"),
+        ("XDG_CONFIG_HOME", "x"),
+    ):
+        monkeypatch.setenv(var, str(tmp_path / val))
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
