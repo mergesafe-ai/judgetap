@@ -54,7 +54,7 @@ Each hop is recorded on the `Decision`. Engine errors and timeouts fall through 
 
 ### 4. Calibration check
 
-`snapjudge eval cases.jsonl --engines jev,laya,llm:gpt-...` runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
+`python -m snapjudge.evaluate cases.jsonl --engines jev,laya,llm:openai/gpt-4o-mini` (becoming `snapjudge eval` once the `snapjudge` command lands with the guard) runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
 
 ### 5. `snapjudge guard`
 
