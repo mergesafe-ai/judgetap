@@ -96,7 +96,7 @@ def test_codex_install_uses_shell_matcher(tmp_path):
     path = tmp_path / "hooks.json"
     install(path, "codex")
     entry = json.loads(path.read_text())["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "^Bash$"
+    assert entry["matcher"] == "^(exec_command|shell|Bash)$"
     assert entry["hooks"][0]["command"] == f"{HOOK_COMMAND} --agent codex"
     assert uninstall(path, "codex") is True
 
@@ -115,3 +115,30 @@ def test_cli_install_all_detects_agents(tmp_path, monkeypatch, capsys):
         and "claude-code" not in out
     )
     assert "/hooks" in out
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tool_name": "exec_command", "tool_input": {"cmd": "git push -f"}},
+        {"tool_name": "exec_command", "tool_input": {"cmd": ["git", "push", "-f"]}},
+        {"tool_name": "Bash", "tool_input": {"command": "git push -f"}},
+    ],
+)
+def test_codex_exec_command_payloads_are_guarded(tmp_path, payload):
+    code, _, err = run({**payload, "cwd": str(tmp_path)}, "codex")
+    assert code == 2 and "force-push" in err
+
+
+def test_uninstall_leaves_edited_hook_commands(tmp_path):
+    path = tmp_path / "hooks.json"
+    edited = f"{HOOK_COMMAND} --agent cursor && ./audit.sh"
+    path.write_text(
+        json.dumps(
+            {"version": 1, "hooks": {"beforeShellExecution": [{"command": edited}]}}
+        )
+    )
+    assert uninstall(path, "cursor") is False
+    assert json.loads(path.read_text())["hooks"]["beforeShellExecution"] == [
+        {"command": edited}
+    ]

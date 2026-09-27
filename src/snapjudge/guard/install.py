@@ -43,7 +43,11 @@ def _write(path: Path, data: dict) -> None:
 
 
 def _ours(command: str | None) -> bool:
-    return bool(command) and command.split(" --agent")[0] == HOOK_COMMAND
+    """Exactly a command this installer writes; anything edited is the user's."""
+    return command in {
+        HOOK_COMMAND,
+        *(f"{HOOK_COMMAND} --agent {a}" for a in ("cursor", "codex")),
+    }
 
 
 def _is_ours(entry: dict) -> bool:
@@ -69,7 +73,7 @@ def install(path: Path, agent: str = "claude-code") -> bool:
         entries.append({"command": command})
     else:
         # Codex's PreToolUse fires for shell only today; the matcher says so.
-        matcher = "^Bash$" if agent == "codex" else MATCHER
+        matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
         entries.append(
             {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
         )

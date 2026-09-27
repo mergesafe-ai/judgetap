@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import time
 from datetime import UTC, datetime
@@ -144,6 +145,9 @@ def log(action: Action, verdict: Verdict, session: str | None) -> None:
 AGENTS = ("claude-code", "cursor", "codex")
 
 
+CODEX_SHELL_TOOLS = ("exec_command", "shell", "Bash")
+
+
 def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
     """Map each agent's hook input onto Claude Code's PreToolUse shape."""
     if agent == "cursor":  # beforeShellExecution: {command, cwd, ...}
@@ -154,7 +158,14 @@ def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
             "session_id": payload.get("conversation_id"),
             "transcript_path": payload.get("transcript_path"),
         }
-    return payload  # Claude Code and Codex share the PreToolUse shape
+    if agent == "codex" and payload.get("tool_name") in CODEX_SHELL_TOOLS:
+        # Codex's shell tool is exec_command with tool_input.cmd (str or argv).
+        inp = payload.get("tool_input") or {}
+        cmd = inp.get("cmd", inp.get("command", ""))
+        if isinstance(cmd, list):
+            cmd = shlex.join(str(c) for c in cmd)
+        return {**payload, "tool_name": "Bash", "tool_input": {"command": cmd}}
+    return payload  # Claude Code's PreToolUse shape
 
 
 def _reason(verdict: Verdict) -> str:
