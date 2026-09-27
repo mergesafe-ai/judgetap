@@ -1,6 +1,6 @@
 [project]
 name = "judgetap"
-version = "0.0.1"
+version = "0.1.0"
 description = "Fast typed decisions (choice, score, yes/no) across Jev-style engines, plus a guard for coding agents. Early development."
 readme = "README.md"
 license = "Apache-2.0"
