@@ -18,7 +18,7 @@ def _guard_hook(args) -> int:
 
 
 def _guard_install(args) -> int:
-    from snapjudge.guard.hook import home
+    from snapjudge.guard.hook import engine_spec, home
     from snapjudge.guard.install import (
         detect_engine,
         install,
@@ -30,14 +30,26 @@ def _guard_install(args) -> int:
     added = install(path)
     print(f"{'Installed' if added else 'Already installed'}: {path}")
     spec, why = detect_engine()
+    existing = engine_spec()
     if spec:
-        print(f"Engine: {spec} ({why}); saved to {write_engine(home(), spec)}")
+        try:
+            saved = write_engine(home(), spec)
+        except ValueError as err:
+            print(f"Engine: not saved ({err}).")
+        else:
+            print(f"Engine: {spec} ({why}); saved to {saved}")
+            if spec.startswith("jev"):
+                print(
+                    "  Jev reads TYPESAFE_API_KEY at hook time: make sure the agent's"
+                )
+                print("  environment has it, or the guard falls back to rules only.")
+    elif existing:
+        print(f"Engine: keeping {existing} from {home() / 'guard.toml'} ({why}).")
     else:
         print(f"Engine: none ({why}).")
-        print(
-            "  For judgements: export TYPESAFE_API_KEY and re-run, or start AgentJev,"
-        )
-        print('  or set engine = "llm:<model>" in ~/.snapjudge/guard.toml.')
+        print("  For judgements: export TYPESAFE_API_KEY, or start an AgentJev server,")
+        print('  then run this install again; or set engine = "llm:<model>" in')
+        print("  ~/.snapjudge/guard.toml.")
     print("Check with: snapjudge guard test")
     return 0
 

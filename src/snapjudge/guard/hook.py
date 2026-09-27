@@ -131,7 +131,13 @@ def _engine():
         return None
     from snapjudge.engines import load
 
-    return load(spec)
+    engine = load(spec)
+    if spec.partition(":")[0] == "jev" and not os.environ.get("TYPESAFE_API_KEY"):
+        # Caught by the caller: the guard then runs rules only, failing closed.
+        raise RuntimeError(
+            "engine is jev but TYPESAFE_API_KEY isn't visible to the hook"
+        )
+    return engine
 
 
 def log(action: Action, verdict: Verdict, session: str | None) -> None:

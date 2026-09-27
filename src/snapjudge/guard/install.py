@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
-import socket
 from pathlib import Path
 
 HOOK_COMMAND = "snapjudge guard hook"
@@ -80,22 +80,37 @@ def detect_engine(probe=None) -> tuple[str | None, str]:
         return os.environ["SNAPJUDGE_ENGINE"], "from $SNAPJUDGE_ENGINE"
     if os.environ.get("TYPESAFE_API_KEY"):
         return "jev", "found TYPESAFE_API_KEY"
-    probe = probe or _agentjev_up
+    probe = probe or agentjev_up
     if probe():
         return "agentjev", "AgentJev server answering on 127.0.0.1:8149"
     return None, "no engine found; rules only (they ask when unsure)"
 
 
-def _agentjev_up(timeout: float = 0.3) -> bool:
+def agentjev_up(
+    url: str = "http://127.0.0.1:8149", timeout: float = 0.5, transport=None
+) -> bool:
+    """True only if the port speaks AgentJev's API, not just accepts a
+    connection: a one-question request must come back as a decision."""
+    from snapjudge.engines.agentjev import AgentJevEngine
+    from snapjudge.types import Question
+
+    kwargs = {"timeout": timeout} | ({"transport": transport} if transport else {})
     try:
-        with socket.create_connection(("127.0.0.1", 8149), timeout=timeout):
-            return True
-    except OSError:
+        AgentJevEngine(url, **kwargs).decide(
+            [Question.yesno("Is this a probe?")], "probe"
+        )
+    except Exception:  # noqa: BLE001 -- anything else on the port is "not AgentJev"
         return False
+    return True
+
+
+SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+-]+")
 
 
 def write_engine(home: Path, spec: str) -> Path:
     """Record the engine in guard.toml, keeping any user rules already there."""
+    if not SPEC_PATTERN.fullmatch(spec):
+        raise ValueError(f"not a valid engine spec: {spec!r}")
     path = home / "guard.toml"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = path.read_text().splitlines() if path.exists() else []
