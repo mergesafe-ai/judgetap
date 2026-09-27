@@ -155,3 +155,29 @@ def test_stop_records_are_not_guarded_calls(tmp_path, capsys):
     assert "1 guarded calls" in capsys.readouterr().out
     s = load(home)["summary"]
     assert s["total"] == 1 and s["stop_checks"] == 1
+
+
+def test_task_and_reply_read_the_transcript_once(tmp_path, monkeypatch):
+    import json
+
+    from judgetap.guard import hook, stop
+
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {"type": "user", "message": {"content": "add a test"}},
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "Added it."}]},
+                },
+            ]
+        )
+        + "\n"
+    )
+    reads = []
+    real = hook._lines_backward
+    monkeypatch.setattr(hook, "_lines_backward", lambda *a: reads.append(1) or real(*a))
+    assert stop.task_and_reply(str(t)) == ("add a test", "Added it.")
+    assert len(reads) == 1
