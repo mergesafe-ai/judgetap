@@ -328,7 +328,7 @@ def test_prune_keeps_locks_and_skips_busy_sessions(tmp_path):
         "busy.json",
         "busy.lock",
         "idle.stop",
-        "x.abc.tmp",
+        "x." + "ab" * 16 + ".tmp",
     ):
         p = tmp_path / name
         p.write_text("{}")
@@ -352,7 +352,9 @@ def test_prune_leaves_a_temp_file_whose_session_is_locked(tmp_path):
     from judgetap.guard.loop import SESSION_TTL_SECONDS, prune_sessions
 
     old = time.time() - SESSION_TTL_SECONDS - 100
-    tmp = tmp_path / "busy.0123abcd.tmp"
+    tmp = tmp_path / (
+        "busy." + "0123abcd" * 4 + ".tmp"
+    )  # <id>.<uuid hex>.tmp, as _save names it
     lock = tmp_path / "busy.lock"
     for p in (tmp, lock):
         p.write_text("x")
