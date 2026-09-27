@@ -135,8 +135,9 @@ def _load(home: Path, today: date) -> dict[str, Any]:
 def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
     """Engine metrics come from the calls each record reports, each with its
     own latency: nothing is inferred. A batch writes its calls on one record
-    only. Records from before calls were logged fall back to the old rule:
-    a successful guard judgement counts one call of its answering engine."""
+    only. Records from before calls were logged fall back: a successful guard
+    judgement counts one call (with its latency) of its answering engine, and
+    a Stop check that asked its engine counts one call (no latency recorded)."""
     reported = r.get("calls")
     if isinstance(reported, list):
         for c in reported:
@@ -145,9 +146,15 @@ def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
                 if isinstance(c.get("latency_ms"), int | float):
                     by_engine[c["engine"]].append(float(c["latency_ms"]))
         return
-    if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
+    if not r.get("engine") or r.get("error"):
+        return
+    if r.get("layer") == "judge":
         calls[r["engine"]] += 1
         by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+    elif r.get("layer") == "stop" and r.get("outcome") in ("allow", "block"):
+        # A Stop check from before calls were logged: it asked its engine
+        # once, but recorded no latency, so only the call is counted.
+        calls[r["engine"]] += 1
 
 
 def _rank(values: Iterable[float], q: float) -> float | None:

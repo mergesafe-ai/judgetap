@@ -193,3 +193,29 @@ def test_stop_records_carry_calls(tmp_path, monkeypatch):
     engine = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="judge")
     stop.handle({"session_id": "s1", "transcript_path": str(t)}, engine=engine)
     assert load(tmp_path)["summary"]["engines"]["judge"]["calls"] == 1
+
+
+def test_old_stop_records_are_counted_without_latency(tmp_path):
+    import json
+
+    from judgetap.dashboard.data import load
+
+    rows = [
+        {
+            "id": "a",
+            "layer": "stop",
+            "outcome": "allow",
+            "engine": "judge",
+            "latency_ms": 0.0,
+        },
+        {
+            "id": "b",
+            "layer": "stop",
+            "outcome": "skip",
+            "engine": "judge",
+            "latency_ms": 0.0,
+        },
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    e = load(tmp_path)["summary"]["engines"]["judge"]
+    assert e["calls"] == 1 and e["p50_ms"] is None
