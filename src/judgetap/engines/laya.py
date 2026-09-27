@@ -2,13 +2,13 @@
 
 Laya takes Jev's question shapes (github.com/NandhaKishorM/laya), so the
 request is built with the Jev adapter's helpers. Needs `pip install
-'snapjudge[laya]'`; the checkpoint downloads from Hugging Face on first use.
+'judgetap[laya]'`; the checkpoint downloads from Hugging Face on first use.
 
 Laya depends on PyTorch, and on Linux pip picks the CUDA build by default
 (several GB). On a CPU-only machine, install the CPU wheel first:
 
     pip install torch --index-url https://download.pytorch.org/whl/cpu
-    pip install 'snapjudge[laya]'
+    pip install 'judgetap[laya]'
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer
-from snapjudge.engines.jev import _distribution, _question_payload
-from snapjudge.errors import SnapjudgeError
-from snapjudge.types import Question
+from judgetap.engine import Context, RawAnswer
+from judgetap.engines.jev import _distribution, _question_payload
+from judgetap.errors import JudgetapError
+from judgetap.types import Question
 
 DEFAULT_MODEL = "typed-decisions"
 
 
-class LayaError(SnapjudgeError):
+class LayaError(JudgetapError):
     """Laya is missing, failed, or answered in an unexpected shape."""
 
 
@@ -50,7 +50,7 @@ class LayaEngine:
                 from laya import Router
             except ImportError as err:
                 raise LayaError(
-                    "the laya engine needs Laya: pip install 'snapjudge[laya]'"
+                    "the laya engine needs Laya: pip install 'judgetap[laya]'"
                 ) from err
             self._router = Router()
         return self._router

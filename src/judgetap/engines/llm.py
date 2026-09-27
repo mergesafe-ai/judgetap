@@ -11,9 +11,9 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer, plain_context
-from snapjudge.errors import SnapjudgeError
-from snapjudge.types import Question
+from judgetap.engine import Context, RawAnswer, plain_context
+from judgetap.errors import JudgetapError
+from judgetap.types import Question
 
 SYSTEM = (
     "You answer typed questions about the given state. For each question, "
@@ -23,7 +23,7 @@ SYSTEM = (
 )
 
 
-class LLMError(SnapjudgeError):
+class LLMError(JudgetapError):
     """The model call failed or its reply could not be parsed."""
 
 
@@ -98,6 +98,6 @@ def _import_litellm():
         import litellm
     except ImportError as err:
         raise LLMError(
-            "the llm engine needs LiteLLM: pip install 'snapjudge[llm]'"
+            "the llm engine needs LiteLLM: pip install 'judgetap[llm]'"
         ) from err
     return litellm

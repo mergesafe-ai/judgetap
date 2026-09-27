@@ -1,4 +1,4 @@
-# snapjudge: design spec (v0)
+# judgetap: design spec (v0)
 
 ## Problem
 
@@ -9,7 +9,7 @@ Typed-decision models (TypeSafe Jev, released Sept 2026; open-weights Laya, Agen
 - the pattern every guide recommends (cheap engine first, escalate on low confidence) is written by hand each time;
 - "pick on calibration" is the standard advice, and nothing measures it.
 
-LiteLLM solved the same fragmentation for text generation. snapjudge does it for decisions.
+LiteLLM solved the same fragmentation for text generation. judgetap does it for decisions.
 
 ## Scope
 
@@ -39,7 +39,7 @@ sj.batch([...questions], context=...)                -> list[Decision]  # one pa
 | `agentjev` | local, open weights | ~50 ms per pass |
 | `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (reading logprobs is a later enhancement) |
 
-Config: `snapjudge.toml` or env vars; `sj.configure(engines=[...])` in code. Keys never logged.
+Config: `judgetap.toml` or env vars; `sj.configure(engines=[...])` in code. Keys never logged.
 
 ### 3. Cascade
 
@@ -54,23 +54,23 @@ Each hop is recorded on the `Decision`. Engine errors and timeouts fall through 
 
 ### 4. Calibration check
 
-`snapjudge eval cases.jsonl --engines jev,laya,llm:openai/gpt-4o-mini` (or `python -m snapjudge.evaluate`) runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
+`judgetap eval cases.jsonl --engines jev,laya,llm:openai/gpt-4o-mini` (or `python -m judgetap.evaluate`) runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
 
-### 5. `snapjudge guard`
+### 5. `judgetap guard`
 
 A pre-action hook for coding agents, built on the core.
 
-- **Agents**: Claude Code (`PreToolUse`), Cursor (`beforeShellExecution`), Codex (`PreToolUse`, hooks enabled by default since 0.145). One binary, `snapjudge guard install --for claude-code|cursor|codex|all`. Cursor uses `beforeShellExecution` (shell only; allow defers to Cursor's settings). Codex's `PreToolUse` fires for shell only today, has no *ask*, so ask becomes a deny that tells the agent to get the user's go-ahead, and new hooks must be trusted with `/hooks`.
+- **Agents**: Claude Code (`PreToolUse`), Cursor (`beforeShellExecution`), Codex (`PreToolUse`, hooks enabled by default since 0.145). One binary, `judgetap guard install --for claude-code|cursor|codex|all`. Cursor uses `beforeShellExecution` (shell only; allow defers to Cursor's settings). Codex's `PreToolUse` fires for shell only today, has no *ask*, so ask becomes a deny that tells the agent to get the user's go-ahead, and new hooks must be trusted with `/hooks`.
 - **Two layers**:
   1. **Rules** (no model, microseconds): built-in list plus the user's `guard.toml`: recursive delete outside the workspace, force-push or push to protected branches, `DROP`/`DELETE` without `WHERE`, `terraform destroy`, secrets in written files. This is a **denylist of common destructive forms, not a sandbox**: shell is a full language, and a determined or obfuscated command can always be written that no pattern set recognises. The rules fail closed where they can tell they can't see (unresolvable paths or command names, unknown push destinations) and otherwise catch what agents actually type. The judgement layer covers the rest; for isolation, use the agent's own sandbox. **With no engine configured**, the guard fails closed instead: anything a rule already holds still holds (e.g. `terraform destroy`), and otherwise programs whose effect the rules can't bound (terraform, kubectl, cloud CLIs, database shells, dd, xargs, `sh -c`, `sudo`, ...), git subcommands outside a known set or with destructive flags, and opaque destructive shell all *ask*.
-  2. **Judgement** (snapjudge, ~250 ms): for everything the rules don't decide, ask: is it irreversible? is it off-task for the stated goal? does it break a rule in `AGENTS.md` / `CLAUDE.md` / `guard.md`?
+  2. **Judgement** (judgetap, ~250 ms): for everything the rules don't decide, ask: is it irreversible? is it off-task for the stated goal? does it break a rule in `AGENTS.md` / `CLAUDE.md` / `guard.md`?
 - **Outcomes**: allow (silent), hold (block with a reason the agent reads and re-plans from), ask (escalate to the user). Holds should be rare; the target is under 5 per 1,000 calls.
 - **Fails safe and visibly**: Claude Code treats a crashing hook as non-blocking, so the guard catches its own errors, applies the rules layer alone, and says so.
-- **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
+- **Log**: every decision to a local JSONL, so `judgetap guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
 
 ## Decided: the guard's default engine (#8)
 
-No engine by default, and nothing downloaded or stored. Rules-only mode fails closed for shell commands (it asks when unsure); without an engine, file writes and edits are only checked for secrets and user rules. `snapjudge guard install` uses an engine the user already has, in this order: `$SNAPJUDGE_ENGINE`, a `TYPESAFE_API_KEY` (Jev), a local AgentJev server on 127.0.0.1:8149. It records the choice as `engine = "..."` in `~/.snapjudge/guard.toml`, because agents often run hooks without the user's shell environment. Install never stores a key by itself; when it detects `TYPESAFE_API_KEY` in the environment and runs in a terminal, it offers (opt-in) to copy it into the OS keychain, and engines read the environment first, then the keychain. A local model isn't the default because of the download (Laya pulls PyTorch; AgentJev needs its own server), and the user's LLM key isn't auto-picked because it adds seconds per guarded call. Either is one line in guard.toml.
+No engine by default, and nothing downloaded or stored. Rules-only mode fails closed for shell commands (it asks when unsure); without an engine, file writes and edits are only checked for secrets and user rules. `judgetap guard install` uses an engine the user already has, in this order: `$JUDGETAP_ENGINE`, a `TYPESAFE_API_KEY` (Jev), a local AgentJev server on 127.0.0.1:8149. It records the choice as `engine = "..."` in `~/.judgetap/guard.toml`, because agents often run hooks without the user's shell environment. Install never stores a key by itself; when it detects `TYPESAFE_API_KEY` in the environment and runs in a terminal, it offers (opt-in) to copy it into the OS keychain, and engines read the environment first, then the keychain. A local model isn't the default because of the download (Laya pulls PyTorch; AgentJev needs its own server), and the user's LLM key isn't auto-picked because it adds seconds per guarded call. Either is one line in guard.toml.
 
 ## Non-goals (v0)
 

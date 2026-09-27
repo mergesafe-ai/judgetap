@@ -1,15 +1,15 @@
-"""Errors raised by snapjudge."""
+"""Errors raised by judgetap."""
 
 
-class SnapjudgeError(Exception):
-    """Base class for every snapjudge error."""
+class JudgetapError(Exception):
+    """Base class for every judgetap error."""
 
 
-class InvalidQuestionError(SnapjudgeError, ValueError):
+class InvalidQuestionError(JudgetapError, ValueError):
     """A question was malformed before it reached any engine."""
 
 
-class InvalidAnswerError(SnapjudgeError):
+class InvalidAnswerError(JudgetapError):
     """An engine returned an answer outside the question's allowed values.
 
     An out-of-set answer is a failure, never a result: callers can rely on
@@ -17,5 +17,9 @@ class InvalidAnswerError(SnapjudgeError):
     """
 
 
-class NoEngineError(SnapjudgeError):
+class NoEngineError(JudgetapError):
     """A decision was requested with no engine configured."""
+
+
+# The old name, kept for one release after the rename (#38).
+SnapjudgeError = JudgetapError

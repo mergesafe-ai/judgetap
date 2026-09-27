@@ -1,5 +1,5 @@
 [project]
-name = "snapjudge"
+name = "judgetap"
 version = "0.0.1"
 description = "Fast typed decisions (choice, score, yes/no) across Jev-style engines, plus a guard for coding agents. Early development."
 readme = "README.md"
@@ -11,7 +11,8 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
-snapjudge = "snapjudge.cli:main"
+judgetap = "judgetap.cli:main"
+snapjudge = "judgetap.cli:main"  # deprecated alias, removed after one release
 
 [project.optional-dependencies]
 llm = ["litellm>=1.40"]
@@ -29,7 +30,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mergesafe-ai/snapjudge"
+Homepage = "https://github.com/mergesafe-ai/judgetap"
 
 [tool.hatch.build]
-artifacts = ["src/snapjudge/dashboard/page.html"]
+artifacts = ["src/judgetap/dashboard/page.html"]

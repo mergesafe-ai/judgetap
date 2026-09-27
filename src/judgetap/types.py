@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from snapjudge.errors import InvalidQuestionError
+from judgetap.errors import InvalidQuestionError
 
 Kind = Literal["choice", "score", "yesno"]
 
@@ -81,7 +81,7 @@ class Decision:
     """An engine's answer to one question.
 
     `value` is always one of the question's options. `p` is the probability
-    of `value` after snapjudge renormalises the engine's distribution to sum
+    of `value` after judgetap renormalises the engine's distribution to sum
     to 1 (within float rounding); for a yes/no question use `p_yes` to read the probability
     of "yes" regardless of which side won.
     """

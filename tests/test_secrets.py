@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from snapjudge import secrets
+from judgetap import secrets
 
 
 class FakeKeyring(types.ModuleType):
@@ -33,7 +33,7 @@ def kr(monkeypatch):
 
 
 def test_env_wins_over_keychain(kr, monkeypatch):
-    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "from-keychain"
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "from-keychain"
     assert secrets.get_key("TYPESAFE_API_KEY") == "from-keychain"
     monkeypatch.setenv("TYPESAFE_API_KEY", "from-env")
     assert secrets.get_key("TYPESAFE_API_KEY") == "from-env"
@@ -44,7 +44,7 @@ def test_missing_keyring_is_none(monkeypatch):
     monkeypatch.setitem(sys.modules, "keyring", None)
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     assert secrets.get_key("TYPESAFE_API_KEY") is None
-    with pytest.raises(RuntimeError, match=r"snapjudge\[keychain\]"):
+    with pytest.raises(RuntimeError, match=r"judgetap\[keychain\]"):
         secrets.set_key("TYPESAFE_API_KEY", "x")
 
 
@@ -57,30 +57,30 @@ def test_broken_backend_is_none(monkeypatch):
 
 
 def test_jev_engine_uses_keychain_key(kr):
-    from snapjudge.engines.jev import JevEngine
+    from judgetap.engines.jev import JevEngine
 
-    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "kc-key"
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "kc-key"
     assert JevEngine()._api_key == "kc-key"
     assert JevEngine(api_key="explicit")._api_key == "explicit"
 
 
 def test_hook_accepts_keychain_key(kr, tmp_path, monkeypatch):
-    from snapjudge.guard import hook
+    from judgetap.guard import hook
 
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
     with pytest.raises(RuntimeError, match="keychain"):
         hook._engine()
-    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "kc-key"
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "kc-key"
     assert hook._engine().name == "jev"
 
 
 def test_keys_set_and_status(kr, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.setattr("getpass.getpass", lambda prompt: "s3cret-value")
     assert main(["keys", "set", "TYPESAFE_API_KEY"]) == 0
-    assert kr.store[("snapjudge", "TYPESAFE_API_KEY")] == "s3cret-value"
+    assert kr.store[("judgetap", "TYPESAFE_API_KEY")] == "s3cret-value"
     main(["keys", "status"])
     out = capsys.readouterr().out
     assert "TYPESAFE_API_KEY: keychain" in out and "s3cret-value" not in out
@@ -89,11 +89,11 @@ def test_keys_set_and_status(kr, monkeypatch, capsys):
 def test_install_non_tty_does_not_save_and_never_writes_key(
     kr, tmp_path, monkeypatch, capsys
 ):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
     monkeypatch.setenv("TYPESAFE_API_KEY", "env-key-value")
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     main(["guard", "install", "--scope", "project"])
@@ -103,7 +103,7 @@ def test_install_non_tty_does_not_save_and_never_writes_key(
 
 
 def test_install_tty_offers_to_save(kr, monkeypatch, capsys):
-    from snapjudge.cli import _offer_keychain
+    from judgetap.cli import _offer_keychain
 
     class Tty(io.StringIO):
         def isatty(self):
@@ -112,31 +112,31 @@ def test_install_tty_offers_to_save(kr, monkeypatch, capsys):
     monkeypatch.setenv("TYPESAFE_API_KEY", "env-key-value")
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
     _offer_keychain(Tty())
-    assert kr.store[("snapjudge", "TYPESAFE_API_KEY")] == "env-key-value"
+    assert kr.store[("judgetap", "TYPESAFE_API_KEY")] == "env-key-value"
     assert "env-key-value" not in capsys.readouterr().out
 
 
 def test_ipv6_loopback_spec_installs(tmp_path):
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.install import write_engine
 
     write_engine(tmp_path, "jev@http://[::1]:8000")
     assert 'engine = "jev@http://[::1]:8000"' in (tmp_path / "guard.toml").read_text()
 
 
 def test_detect_engine_finds_a_keychain_only_key(kr, monkeypatch):
-    from snapjudge.guard.install import detect_engine
+    from judgetap.guard.install import detect_engine
 
-    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
-    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "k"
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "k"
     assert detect_engine(probe=lambda: False)[0] == "jev"
 
 
 def test_hook_reads_the_keychain_once(kr, monkeypatch, tmp_path):
-    from snapjudge.guard import hook
+    from judgetap.guard import hook
 
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
-    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "k"
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "k"
     reads = []
     real = kr.get_password
     kr.get_password = lambda service, name: reads.append(name) or real(service, name)
@@ -154,7 +154,16 @@ def test_hook_reads_the_keychain_once(kr, monkeypatch, tmp_path):
     ],
 )
 def test_keychain_offer_covers_remote_typesafe(kr, monkeypatch, spec, expected):
-    from snapjudge.cli import _uses_typesafe_key
+    from judgetap.cli import _uses_typesafe_key
 
     monkeypatch.setenv("TYPESAFE_API_KEY", "k")  # the install-time case: key present
-    assert _uses_typesafe_key(spec) is expected
+    from judgetap.engines import load
+
+    assert _uses_typesafe_key(load(spec)) is expected
+
+
+def test_old_keychain_service_is_read(kr):
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "old"
+    assert secrets.get_key("TYPESAFE_API_KEY") == "old"
+    kr.store[("judgetap", "TYPESAFE_API_KEY")] = "new"
+    assert secrets.get_key("TYPESAFE_API_KEY") == "new"

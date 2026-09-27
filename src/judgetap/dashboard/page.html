@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>snapjudge dashboard</title>
+<title>judgetap dashboard</title>
 <style>
 :root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e4e3de; --card:#ffffff;
   --hold:#b3261e; --ask:#9a6700; --allow:#2e6b3a; --accent:#3a5bd9; }
@@ -35,7 +35,7 @@ button { background:none; border:1px solid var(--line); color:var(--accent); bor
 </head>
 <body>
 <main>
-  <h1>snapjudge dashboard</h1>
+  <h1>judgetap dashboard</h1>
   <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted status" role="status">Loading…</span></p>
   <div class="tiles" id="tiles"></div>
   <section><h2>Last 30 days</h2><div class="days" id="days"></div></section>
@@ -113,13 +113,13 @@ async function refresh() {
     status.classList.add("error");
     status.textContent = (lastOk
       ? `Couldn't refresh (${err.message}); showing data from ${lastOk.toLocaleTimeString()}.`
-      : `Couldn't load data (${err.message}). Is snapjudge dashboard still running?`) + " Retrying in 10 s.";
+      : `Couldn't load data (${err.message}). Is judgetap dashboard still running?`) + " Retrying in 10 s.";
   }
 }
 $("recent").addEventListener("click", async (e) => {
   const id = e.target.dataset && e.target.dataset.id;
   if (!id) return;
-  const res = await fetch("/api/false-alarm", { method: "POST", headers: { "Content-Type": "application/json", "X-Snapjudge-Token": TOKEN }, body: JSON.stringify({ id }) }).catch(() => null);
+  const res = await fetch("/api/false-alarm", { method: "POST", headers: { "Content-Type": "application/json", "X-Judgetap-Token": TOKEN }, body: JSON.stringify({ id }) }).catch(() => null);
   if (!res || !res.ok) { $("updated").classList.add("error"); $("updated").textContent = "Couldn't save the false alarm; try again."; return; }
   refresh();
 });

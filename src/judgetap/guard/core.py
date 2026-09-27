@@ -1,4 +1,4 @@
-"""Decide one agent action: rules first, then a snapjudge judgement."""
+"""Decide one agent action: rules first, then a judgetap judgement."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from snapjudge.api import batch
-from snapjudge.engine import Engine
-from snapjudge.guard.rules import (
+from judgetap.api import batch
+from judgetap.engine import Engine
+from judgetap.guard.rules import (
     Outcome,
     check_command,
     check_content,
     rules_only_check,
 )
-from snapjudge.types import Question
+from judgetap.types import Question
 
 # Thresholds on p(yes). Holds need strong evidence; the guard should stay
 # quiet on almost every call.

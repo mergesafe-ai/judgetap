@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from snapjudge.types import Question
+from judgetap.types import Question
 
 Context = str | Mapping[str, Any] | None
 
@@ -39,7 +39,7 @@ def _plain(value: Any) -> Any:
 class RawAnswer:
     """What an engine returns for one question, before validation.
 
-    `distribution` maps each option to a probability. snapjudge checks it
+    `distribution` maps each option to a probability. judgetap checks it
     against the question, so adapters pass through what the engine said
     rather than repairing it.
     """

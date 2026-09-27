@@ -1,4 +1,4 @@
-"""The `snapjudge` command."""
+"""The `judgetap` command."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from pathlib import Path
 
 
 def _guard_hook(args) -> int:
-    from snapjudge.guard.hook import run
+    from judgetap.guard.hook import run
 
     return run(agent=args.agent)
 
 
 def _agents(args) -> list[str]:
-    from snapjudge.guard.install import detected_agents
+    from judgetap.guard.install import detected_agents
 
     if args.agent != "all":
         return [args.agent]
@@ -30,11 +30,12 @@ def _agents(args) -> list[str]:
 
 
 def _guard_install(args) -> int:
-    from snapjudge.guard.hook import home, saved_engine
-    from snapjudge.guard.install import (
+    from judgetap.guard.hook import home, saved_engine
+    from judgetap.guard.install import (
         detect_engine,
         install,
         settings_path,
+        validate_engine,
         write_engine,
     )
 
@@ -52,12 +53,13 @@ def _guard_install(args) -> int:
         spec, why = detect_engine()
         if spec:
             try:
-                saved = write_engine(home(), spec)
+                engine = validate_engine(spec)
+                saved = write_engine(home(), spec, engine=engine)
             except ValueError as err:
                 print(f"Engine: not saved ({err}).")
             else:
                 print(f"Engine: {spec} ({why}); saved to {saved}")
-                if _uses_typesafe_key(spec):
+                if _uses_typesafe_key(engine):
                     _offer_keychain()
         else:
             print(f"Engine: none ({why}).")
@@ -65,25 +67,19 @@ def _guard_install(args) -> int:
                 "  For judgements: export TYPESAFE_API_KEY, or start an AgentJev server,"
             )
             print('  then run this install again; or set engine = "llm:<model>" in')
-            print("  ~/.snapjudge/guard.toml.")
-    print("Check with: snapjudge guard test")
+            print("  ~/.judgetap/guard.toml.")
+    print("Check with: judgetap guard test")
     return 0
 
 
-def _uses_typesafe_key(spec: str) -> bool:
+def _uses_typesafe_key(engine) -> bool:
     """Any engine that authenticates with TYPESAFE_API_KEY: hosted Jev, or a
     TypeSafe-compatible endpoint that isn't on this machine."""
-    from snapjudge.engines import load
-
-    try:
-        engine = load(spec)
-    except Exception:  # noqa: BLE001 -- an unloadable spec was already rejected by write_engine
-        return False
     return getattr(engine, "local", True) is False
 
 
 def _guard_uninstall(args) -> int:
-    from snapjudge.guard.install import settings_path, uninstall
+    from judgetap.guard.install import settings_path, uninstall
 
     for agent in _agents(args):
         path = settings_path(args.scope, Path.cwd(), agent)
@@ -96,7 +92,7 @@ def _guard_uninstall(args) -> int:
 
 
 def _guard_test(args) -> int:
-    from snapjudge.guard.hook import run
+    from judgetap.guard.hook import run
 
     samples = [
         ("git status", "should allow"),
@@ -133,7 +129,7 @@ def _rank(histogram: Counter[int], q: float) -> int:
 
 
 def _guard_stats(args) -> int:
-    from snapjudge.guard.hook import home
+    from judgetap.guard.hook import home
 
     path = home() / "guard.jsonl"
     if not path.exists():
@@ -178,12 +174,12 @@ def _guard_stats(args) -> int:
 def _dashboard(args) -> int:
     import webbrowser
 
-    from snapjudge.dashboard.server import serve
-    from snapjudge.guard.hook import home
+    from judgetap.dashboard.server import serve
+    from judgetap.guard.hook import home
 
     server = serve(home(), args.port)
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"snapjudge dashboard on {url} (Ctrl+C to stop); reading {home()}")
+    print(f"judgetap dashboard on {url} (Ctrl+C to stop); reading {home()}")
     if not args.no_browser:
         webbrowser.open(url)
     try:
@@ -197,21 +193,23 @@ def _dashboard(args) -> int:
 
 def _offer_keychain(stdin=None) -> None:
     """Offer to copy TYPESAFE_API_KEY into the keychain, interactively only."""
-    from snapjudge.secrets import key_source, set_key
+    from judgetap.secrets import key_source, set_key
 
     stdin = stdin or sys.stdin
     source = key_source("TYPESAFE_API_KEY")
     if source == "keychain":
-        print("  Jev key: found in the keychain.")
+        print("  TypeSafe API key: found in the keychain.")
         return
     if source != "env":
-        print("  Jev key: none found; run `snapjudge keys set TYPESAFE_API_KEY`.")
+        print(
+            "  TypeSafe API key: none found; run `judgetap keys set TYPESAFE_API_KEY`."
+        )
         return
     if not stdin.isatty():
-        print("  Jev key: only in this shell's env; hooks may not see it. Save it with")
         print(
-            "  `snapjudge keys set TYPESAFE_API_KEY` (not saved: no terminal to ask)."
+            "  TypeSafe API key: only in this shell's env; hooks may not see it. Save it with"
         )
+        print("  `judgetap keys set TYPESAFE_API_KEY` (not saved: no terminal to ask).")
         return
     answer = input(
         "  Save TYPESAFE_API_KEY to the OS keychain so hooks can read it? [Y/n] "
@@ -228,7 +226,7 @@ def _offer_keychain(stdin=None) -> None:
 def _keys_set(args) -> int:
     import getpass
 
-    from snapjudge.secrets import set_key
+    from judgetap.secrets import set_key
 
     value = getpass.getpass(f"{args.name}: ")  # never echoed, never in argv
     if not value:
@@ -244,7 +242,7 @@ def _keys_set(args) -> int:
 
 
 def _keys_status(args) -> int:
-    from snapjudge.secrets import key_source
+    from judgetap.secrets import key_source
 
     for name in args.names or ["TYPESAFE_API_KEY"]:
         print(f"{name}: {key_source(name) or 'not set'}")
@@ -252,10 +250,10 @@ def _keys_status(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="snapjudge")
+    parser = argparse.ArgumentParser(prog="judgetap")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
-        "eval", help="compare engines on labelled cases (snapjudge eval --help)"
+        "eval", help="compare engines on labelled cases (judgetap eval --help)"
     )
     keys = sub.add_parser("keys", help="engine keys in the OS keychain")
     ksub = keys.add_subparsers(dest="keys_command", required=True)
@@ -302,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["eval"]:  # its own argparse, so its --help and flags pass through
-        from snapjudge.evaluate import main as eval_main
+        from judgetap.evaluate import main as eval_main
 
         return eval_main(argv[1:])
     args = parser.parse_args(argv)

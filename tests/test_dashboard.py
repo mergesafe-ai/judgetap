@@ -7,8 +7,8 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from snapjudge.dashboard.data import load
-from snapjudge.dashboard.server import make_handler
+from judgetap.dashboard.data import load
+from judgetap.dashboard.server import make_handler
 
 ROWS = [
     {
@@ -103,7 +103,7 @@ def call(url, method="GET", body=None, headers=None):
 def test_page_and_data(server):
     base, _ = server
     status, body = call(base + "/")
-    assert status == 200 and b"snapjudge dashboard" in body and b'"tok"' in body
+    assert status == 200 and b"judgetap dashboard" in body and b'"tok"' in body
     status, body = call(base + "/api/data")
     assert status == 200 and json.loads(body)["summary"]["total"] == 3
 
@@ -119,7 +119,7 @@ def test_false_alarm_needs_token_and_a_real_hold(server, home):
     hold_id = by_subject["git push -f"]
     body = json.dumps({"id": hold_id}).encode()
     assert call(base + "/api/false-alarm", "POST", body)[0] == 403
-    headers = {"X-Snapjudge-Token": "tok", "Content-Type": "application/json"}
+    headers = {"X-Judgetap-Token": "tok", "Content-Type": "application/json"}
     allow_id = json.dumps({"id": by_subject["make test"]}).encode()
     assert call(base + "/api/false-alarm", "POST", allow_id, headers)[0] == 404
     assert call(base + "/api/false-alarm", "POST", body, headers)[0] == 200
@@ -130,7 +130,7 @@ def test_false_alarm_needs_token_and_a_real_hold(server, home):
 
 def test_oversized_body_is_rejected(server):
     base, _ = server
-    headers = {"X-Snapjudge-Token": "tok"}
+    headers = {"X-Judgetap-Token": "tok"}
     assert call(base + "/api/false-alarm", "POST", b"x" * 5000, headers)[0] == 413
 
 
@@ -156,7 +156,7 @@ def test_per_day_is_a_30_day_calendar_window(tmp_path):
 
 
 def test_identical_ts_and_session_get_distinct_ids(tmp_path):
-    from snapjudge.dashboard.data import mark_false_alarm
+    from judgetap.dashboard.data import mark_false_alarm
 
     row = {"ts": "2026-09-26T10:00:00+00:00", "session": "s", "outcome": "hold"}
     (tmp_path / "guard.jsonl").write_text(
@@ -173,10 +173,10 @@ def test_identical_ts_and_session_get_distinct_ids(tmp_path):
 def test_logged_records_carry_a_unique_id(tmp_path, monkeypatch):
     import io
 
-    from snapjudge.guard import hook
+    from judgetap.guard import hook
 
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
-    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
     for _ in range(2):
         payload = {
             "tool_name": "Bash",
@@ -194,7 +194,7 @@ def test_logged_records_carry_a_unique_id(tmp_path, monkeypatch):
 
 def test_non_string_id_is_400(server):
     base, _ = server
-    headers = {"X-Snapjudge-Token": "tok", "Content-Type": "application/json"}
+    headers = {"X-Judgetap-Token": "tok", "Content-Type": "application/json"}
     assert call(base + "/api/false-alarm", "POST", b'{"id": []}', headers)[0] == 400
 
 
@@ -205,7 +205,7 @@ def test_page_has_filter_labels_and_status(server):
 
 
 def test_engine_calls_are_counted_past_the_latency_cap(tmp_path, monkeypatch):
-    from snapjudge.dashboard import data
+    from judgetap.dashboard import data
 
     monkeypatch.setattr(data, "MAX_LATENCIES", 3)
     rows = [
@@ -223,7 +223,7 @@ def test_engine_calls_are_counted_past_the_latency_cap(tmp_path, monkeypatch):
 
 
 def test_load_is_cached_until_the_log_changes(tmp_path, monkeypatch):
-    from snapjudge.dashboard import data
+    from judgetap.dashboard import data
 
     log = tmp_path / "guard.jsonl"
     log.write_text(json.dumps(ROWS[0]) + "\n")
@@ -240,7 +240,7 @@ def test_load_is_cached_until_the_log_changes(tmp_path, monkeypatch):
 
 def test_bad_content_length_is_400(server):
     base, _ = server
-    headers = {"X-Snapjudge-Token": "tok", "Content-Length": "abc"}
+    headers = {"X-Judgetap-Token": "tok", "Content-Length": "abc"}
     req = urllib.request.Request(
         base + "/api/false-alarm", data=b"", method="POST", headers=headers
     )
@@ -260,7 +260,7 @@ def test_page_has_empty_chart_message(server):
 
 
 def test_library_records_are_counted_apart(tmp_path):
-    from snapjudge.dashboard.data import load
+    from judgetap.dashboard.data import load
 
     rows = [
         {
@@ -311,7 +311,7 @@ def test_library_hold_cannot_be_marked_false_alarm(tmp_path):
             f"http://127.0.0.1:{port}/api/false-alarm",
             "POST",
             b'{"id": "l1"}',
-            {"X-Snapjudge-Token": "tok", "Content-Type": "application/json"},
+            {"X-Judgetap-Token": "tok", "Content-Type": "application/json"},
         )
         assert status == 404
     finally:
@@ -326,7 +326,7 @@ def test_content_length_must_be_ascii_digits_and_present(server, length):
     _, port = server
     conn = http.client.HTTPConnection("127.0.0.1", port)
     conn.putrequest("POST", "/api/false-alarm", skip_accept_encoding=True)
-    conn.putheader("X-Snapjudge-Token", "tok")
+    conn.putheader("X-Judgetap-Token", "tok")
     if length is not None:
         conn.putheader("Content-Length", length.encode("utf-8").decode("latin-1"))
     conn.endheaders()
@@ -335,7 +335,7 @@ def test_content_length_must_be_ascii_digits_and_present(server, length):
 
 
 def test_cache_is_safe_under_concurrent_loads(tmp_path):
-    from snapjudge.dashboard import data
+    from judgetap.dashboard import data
 
     log = tmp_path / "guard.jsonl"
     log.write_text(json.dumps(ROWS[0]) + "\n")

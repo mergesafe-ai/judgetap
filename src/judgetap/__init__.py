@@ -1,7 +1,7 @@
-"""snapjudge: fast typed decisions across Jev-style engines."""
+"""judgetap: fast typed decisions across Jev-style engines."""
 
-from snapjudge import engines
-from snapjudge.api import (
+from judgetap import engines
+from judgetap.api import (
     abatch,
     achoice,
     ascore,
@@ -12,15 +12,15 @@ from snapjudge.api import (
     score,
     yesno,
 )
-from snapjudge.cascade import Cascade, CascadeExhaustedError
-from snapjudge.engine import Context, Engine, RawAnswer
-from snapjudge.errors import (
+from judgetap.cascade import Cascade, CascadeExhaustedError
+from judgetap.engine import Context, Engine, RawAnswer
+from judgetap.errors import (
     InvalidAnswerError,
     InvalidQuestionError,
+    JudgetapError,
     NoEngineError,
-    SnapjudgeError,
 )
-from snapjudge.types import Decision, Question
+from judgetap.types import Decision, Question
 
 __version__ = "0.0.1"  # x-release-please-version
 
@@ -32,10 +32,10 @@ __all__ = [
     "Engine",
     "InvalidAnswerError",
     "InvalidQuestionError",
+    "JudgetapError",
     "NoEngineError",
     "Question",
     "RawAnswer",
-    "SnapjudgeError",
     "abatch",
     "achoice",
     "ascore",

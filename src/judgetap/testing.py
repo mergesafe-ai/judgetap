@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 
-from snapjudge.engine import Context, RawAnswer
-from snapjudge.types import Question
+from judgetap.engine import Context, RawAnswer
+from judgetap.types import Question
 
 Script = Callable[[Question, Context], Mapping[str, float]]
 

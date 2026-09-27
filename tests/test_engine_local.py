@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.engines import load
-from snapjudge.engines.agentjev import AgentJevEngine, AgentJevError
-from snapjudge.engines.laya import LayaEngine, LayaError
+import judgetap as sj
+from judgetap.engines import load
+from judgetap.engines.agentjev import AgentJevEngine, AgentJevError
+from judgetap.engines.laya import LayaEngine, LayaError
 
 QS = [
     sj.Question.yesno("Tests passing?"),
@@ -61,7 +61,7 @@ def test_laya_missing_package_names_the_extra(monkeypatch):
     import sys
 
     monkeypatch.setitem(sys.modules, "laya", None)
-    with pytest.raises(LayaError, match=r"snapjudge\[laya\]"):
+    with pytest.raises(LayaError, match=r"judgetap\[laya\]"):
         sj.yesno("q", engine=LayaEngine())
 
 

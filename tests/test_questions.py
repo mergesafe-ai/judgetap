@@ -1,6 +1,6 @@
 import pytest
 
-from snapjudge import InvalidQuestionError, Question
+from judgetap import InvalidQuestionError, Question
 
 
 @pytest.mark.parametrize(
@@ -28,7 +28,7 @@ def test_limits_are_inclusive():
 
 
 def test_level_and_p_yes_only_on_their_kinds():
-    from snapjudge.types import Decision
+    from judgetap.types import Decision
 
     q = Question.choice("q", ["a", "b"])
     d = Decision(q, "a", 1.0, {"a": 1.0, "b": 0.0}, "e", 0.0)
@@ -61,8 +61,8 @@ def test_non_list_options_raise_invalid_question(bad):
 
 @pytest.mark.parametrize("bad", ["ab", {"low", "high"}, (o for o in "ab")])
 def test_public_api_rejects_strings_sets_and_generators(bad):
-    import snapjudge as sj
-    from snapjudge.testing import StaticEngine
+    import judgetap as sj
+    from judgetap.testing import StaticEngine
 
     engine = StaticEngine(lambda q, c: {o: 1 / len(q.options) for o in q.options})
     with pytest.raises(InvalidQuestionError):
