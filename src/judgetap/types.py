@@ -96,6 +96,8 @@ class Decision:
     escalated: bool = False
     calibrated: bool = True
     meta: dict[str, object] = field(default_factory=dict)
+    # Every engine call behind this decision's batch (shared by the batch).
+    calls: tuple = ()
 
     @property
     def p_yes(self) -> float:

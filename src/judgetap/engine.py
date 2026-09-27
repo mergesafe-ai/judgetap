@@ -36,6 +36,28 @@ def _plain(value: Any) -> Any:
 
 
 @dataclass(frozen=True)
+class Call:
+    """One invocation of one engine, measured where it was made.
+
+    Composite engines (the cascade) report the calls they made to the
+    engines inside them, so per-engine metrics never have to be inferred.
+    """
+
+    engine: str
+    latency_ms: float
+    ok: bool
+    questions: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "engine": self.engine,
+            "latency_ms": round(self.latency_ms, 1),
+            "ok": self.ok,
+            "questions": self.questions,
+        }
+
+
+@dataclass(frozen=True)
 class RawAnswer:
     """What an engine returns for one question, before validation.
 
@@ -51,6 +73,9 @@ class RawAnswer:
     # and every engine consulted, in order.
     engine: str | None = None
     hops: tuple[str, ...] = ()
+    # Engine calls made to produce this batch (set by composite engines;
+    # the same tuple on every answer of the batch).
+    calls: tuple[Call, ...] = ()
 
 
 @runtime_checkable

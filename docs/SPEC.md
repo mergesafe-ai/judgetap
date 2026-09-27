@@ -75,6 +75,10 @@ No engine by default, and nothing downloaded or stored. Rules-only mode fails cl
 
 **Experimental, opt-in: task-done check.** `judgetap guard install --with stop` adds a Claude Code `Stop` hook that asks the engine whether the user's task is actually finished. Only a confident "not done" (p(done) <= `stop_threshold`, default 0.15, set in `~/.judgetap/guard.toml`) blocks the stop, at most twice per session, and never while a previous block is being handled. It needs an engine and is off by default until an eval set shows it's reliable.
 
+## Engine calls
+
+Every `Decision` carries `calls`: one `Call(engine, latency_ms, ok, questions)` per engine invocation behind its batch, measured where the call was made. The core times plain engines. A cascade times each engine it asks and passes a nested cascade's own calls through, so the list names providers, never cascades; its `on_exhausted` callback isn't an engine and makes no call. Failures carry the calls made so far (`err.calls`, including `CascadeExhaustedError`). Logs write a batch's calls once, and the dashboard's engine table counts and times each call; records written before calls existed fall back to one call per successful guard judgement.
+
 ## Non-goals (v0)
 
 - Training or hosting a decision model.

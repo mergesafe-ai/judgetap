@@ -154,21 +154,6 @@ def test_async_scheduling_failure_does_not_fail_the_decision(tmp_path, monkeypat
     assert d.value == "yes"
 
 
-def test_library_calls_stay_out_of_the_engine_table(tmp_path, monkeypatch):
-    import judgetap as sj
-    from judgetap.dashboard.data import load
-    from judgetap.testing import StaticEngine
-
-    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
-    monkeypatch.setenv("JUDGETAP_LOG", "1")
-    sj.yesno(
-        "q",
-        engine=StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="lib-engine"),
-    )
-    summary = load(tmp_path)["summary"]
-    assert summary["library"] == 1 and "lib-engine" not in summary["engines"]
-
-
 def test_library_outcome_is_redacted(tmp_path, monkeypatch):
     import judgetap as jt
     from judgetap.testing import StaticEngine

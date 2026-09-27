@@ -72,6 +72,7 @@ class Verdict:
     rule: str | None = None
     p: dict[str, float] = field(default_factory=dict)
     engine: str | None = None
+    calls: tuple = ()  # every engine call the judge made (judgetap.engine.Call)
     latency_ms: float = 0.0
     cost_usd: float | None = None
     error: str | None = None
@@ -170,17 +171,21 @@ def _judge(action: Action, engine: Engine) -> Verdict:
     except Exception as err:  # noqa: BLE001 -- the judge must never break the agent
         # Fail closed like rules-only mode: an unreachable judge is no engine.
         error = f"{type(err).__name__}: {err}"
+        made = tuple(getattr(err, "calls", ()))  # calls made before it failed
         fallback = rules_only_check(action.command) if action.command else None
         if fallback:
             outcome, name, reason = fallback
-            return Verdict(outcome, "rules", reason, rule=name, error=error)
-        return Verdict("allow", "judge", "judgement failed; rules only", error=error)
+            return Verdict(outcome, "rules", reason, rule=name, error=error, calls=made)
+        return Verdict(
+            "allow", "judge", "judgement failed; rules only", error=error, calls=made
+        )
     latency = (time.perf_counter() - start) * 1000
     p = {k: d.p_yes for k, d in zip(keys, decisions, strict=True)}
     costs = [d.cost_usd for d in decisions if d.cost_usd is not None]
     common = {
         "p": p,
         "engine": decisions[0].engine,
+        "calls": decisions[0].calls,
         "latency_ms": latency,
         "cost_usd": sum(costs) if costs else None,
     }
