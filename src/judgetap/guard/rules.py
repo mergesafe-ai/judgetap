@@ -639,7 +639,15 @@ COMMAND_SECRETS = (
     re.compile(
         r"(?i)(?P<keep>(--)?(password|passwd|token|secret|api[-_]?key)[= ]\s*)[^\s'\"]+"
     ),
-    re.compile(r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)=)\S+"),
+    # Env assignments with the keyword anywhere in the name:
+    # AWS_SECRET_ACCESS_KEY=, GH_TOKEN_RW=, PGPASSWORD=, DB_PRIVATE_KEY=.
+    # mysql/mariadb take the password attached: -phunter2 (a bare -p prompts).
+    re.compile(
+        r"(?P<keep>\b(mysql|mariadb|mysqldump|mysqladmin)\b[^;&|\n]*?\s-p)"
+        r"(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)"
+    ),
+    # sshpass -p <password>.
+    re.compile(r"(?P<keep>\bsshpass\s+-p\s*)(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)"),
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
     # Basic auth on the command line: curl -u user:pass, --user=user:pass.
     # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
@@ -724,9 +732,30 @@ def _redact_segment(text: str) -> str:
     return "".join(out)
 
 
+ENV_SECRET = re.compile(
+    r"(?i)\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Z0-9_]*="
+)
+
+
+def _redact_env_assignments(text: str) -> str:
+    """Mask the whole value of a secret-named assignment, quoted values and
+    escapes included (`DB_PRIVATE_KEY="two words"`), via the shell-word scanner."""
+    out, pos = [], 0
+    for m in ENV_SECRET.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _shell_word_end(text, m.end())
+        if end > m.end():
+            out.append(text[pos : m.end()] + "[REDACTED]")
+            pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def redact(text: str) -> str:
     """Mask credential-looking values so a command can be logged."""
     text = _redact_basic_auth(text)
+    text = _redact_env_assignments(text)
     for _name, pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     for pattern in COMMAND_SECRETS:
@@ -853,3 +882,76 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
 def _first_command_index(argv: list[str]) -> int:
     """Index of the command a wrapper chain finally runs."""
     return len(argv) - len(_unwrap(argv))
+
+
+# Files that configure the guard (or the agent's hooks). An agent editing
+# them could switch the guard off, so a person should see it first.
+GUARD_CONFIG = re.compile(
+    r"(^|/)(guard\.toml|\.claude/settings[^/]*\.json|\.cursor/hooks\.json"
+    r"|\.codex/hooks\.json|\.codex/config\.toml)$"
+)
+
+
+def _is_guard_config(path: str, cwd: Path | None) -> bool:
+    """The literal path, and where it really points (symlinks followed,
+    relative paths taken from cwd), both checked."""
+    candidates = [path.replace("\\", "/")]
+    try:
+        p = Path(path).expanduser()
+        if cwd is not None and not p.is_absolute():
+            p = cwd / p
+        candidates.append(p.resolve(strict=False).as_posix())
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return any(GUARD_CONFIG.search(c) for c in candidates)
+
+
+def check_path(
+    path: str | None, cwd: Path | None = None
+) -> tuple[Outcome, str, str] | None:
+    """Ask before a write to the guard's own configuration."""
+    if path and _is_guard_config(path, cwd):
+        return "ask", "guard-config", f"edits the guard's own configuration ({path})"
+    return None
+
+
+# Any mention of a guard-config file in a shell command asks. Parsing every
+# way the shell can write a file (fd redirects, --target-directory, dd of=,
+# python -c, ...) is an unbounded list; a mention is not. Reading the config
+# (`cat guard.toml`) asks too: rare, and cheap to approve.
+GUARD_CONFIG_MENTION = re.compile(
+    r"(?:guard\.toml|\.claude/settings[^\s'\"/]*\.json|\.cursor/hooks\.json"
+    r"|\.codex/hooks\.json|\.codex/config\.toml)"
+)
+
+
+REDIRECT_PREFIX = re.compile(r"^(?:\d*|&)(?:>>?|<>?)\|?")
+
+
+def _words(command: str) -> list[str]:
+    """Every shell word, with redirections split off even when attached."""
+    spaced = re.sub(r"(\d*|&)(>>?|<>?)\|?", lambda m: " " + m.group(0) + " ", command)
+    words: list[str] = []
+    for argv in _commands(spaced, unwrap=False) or []:
+        words += argv
+    return words
+
+
+def check_command_writes(
+    command: str, cwd: Path | None = None
+) -> tuple[Outcome, str, str] | None:
+    """Ask when a shell command mentions the guard's own configuration, or
+    a word in it resolves (symlinks followed) to one."""
+    if GUARD_CONFIG_MENTION.search(command.replace("\\", "/")):
+        return "ask", "guard-config", "touches the guard's own configuration"
+    # Every word, with redirection operators peeled off (`2>alias`, `&>>x`,
+    # `>|y`) and `--opt=` prefixes dropped, is resolved: a symlink with any
+    # name can point at the config.
+    for word in _words(command):
+        word = REDIRECT_PREFIX.sub("", word)
+        # Both the whole word (a file may be named `a=b`) and the value of an
+        # `--opt=value` / `of=value` word.
+        for target in {word, word.split("=", 1)[-1]}:
+            if target and _is_guard_config(target, cwd):
+                return "ask", "guard-config", "touches the guard's own configuration"
+    return None

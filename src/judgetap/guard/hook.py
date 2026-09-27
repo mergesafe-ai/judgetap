@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -19,7 +20,14 @@ from pathlib import Path
 from typing import Any
 
 from judgetap._compat import default_home, env
-from judgetap.guard.core import Action, Verdict, check, load_user_rules, project_rules
+from judgetap.guard.core import (
+    Action,
+    Verdict,
+    check,
+    dropped_allows,
+    load_user_rules,
+    project_rules,
+)
 from judgetap.guard.rules import redact
 
 TRANSCRIPT_SCAN_BYTES = 2 * 1024 * 1024
@@ -31,27 +39,47 @@ def home() -> Path:
     return Path(configured) if configured else default_home()
 
 
+def _text(value: Any) -> str:
+    """Hook fields as text, whatever type arrived (None -> "")."""
+    return "" if value is None else value if isinstance(value, str) else str(value)
+
+
 def action_from_hook(payload: dict[str, Any]) -> Action | None:
+    """The action to check. Parsing never raises on odd field types; if the
+    extras (task, project rules) can't be read, the rules still run."""
     tool = payload.get("tool_name")
     if tool not in GUARDED_TOOLS:
         return None
-    inp = payload.get("tool_input") or {}
-    cwd = Path(payload.get("cwd") or os.getcwd())
+    inp = payload.get("tool_input")
+    inp = inp if isinstance(inp, dict) else {}
+    cwd = Path(_text(payload.get("cwd")) or os.getcwd())
     action = Action(tool=tool, cwd=cwd)
     if tool == "Bash":
-        action.command = inp.get("command", "")
+        command = inp.get("command")
+        # None means the command couldn't be read: _decide asks rather than allows.
+        action.command = None if command is None else _text(command)
+        action.unreadable = command is None
     else:
-        action.path = inp.get("file_path")
+        action.path = _text(inp.get("file_path")) or None
         if tool == "Write":
-            action.content = inp.get("content", "")
+            action.content = _text(inp.get("content"))
         elif tool == "Edit":
-            action.content = inp.get("new_string", "")
+            action.content = _text(inp.get("new_string"))
         else:
+            edits = inp.get("edits")
+            edits = edits if isinstance(edits, list) else []
             action.content = "\n".join(
-                e.get("new_string", "") for e in inp.get("edits", [])
+                _text(e.get("new_string")) if isinstance(e, dict) else _text(e)
+                for e in edits
             )
-    action.task = last_user_message(payload.get("transcript_path"))
-    action.project_rules = project_rules(cwd)
+    try:
+        action.task = last_user_message(_text(payload.get("transcript_path")) or None)
+    except Exception:  # noqa: BLE001 -- enrichment only: the rules still run
+        action.task = None
+    try:
+        action.project_rules = project_rules(cwd)
+    except Exception:  # noqa: BLE001 -- enrichment only
+        action.project_rules = None
     return action
 
 
@@ -265,7 +293,7 @@ def run(
         if action is None:
             out = {"permission": "allow"} if agent == "cursor" else None
         else:
-            verdict = _decide(action, start)
+            verdict = _decide(action, start, payload.get("session_id"))
             if record:
                 try:
                     log(action, verdict, payload.get("session_id"))
@@ -286,7 +314,35 @@ def run(
     return code
 
 
-def _decide(action: Action, start: float) -> Verdict:
+def _warn_once(session: str | None, key: str) -> bool:
+    """True the first time `key` is warned about in this session."""
+    if not isinstance(session, str) or not re.fullmatch(
+        r"[A-Za-z0-9._-]{1,128}", session
+    ):
+        return True  # no usable session id: warn rather than stay silent
+    marker = home() / "sessions" / f"{session}.warned"
+    try:
+        seen = set(marker.read_text().splitlines()) if marker.exists() else set()
+        if key in seen:
+            return False
+        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(marker, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as fh:
+            fh.write(key + "\n")
+    except OSError:
+        return True
+    return True
+
+
+def _decide(action: Action, start: float, session: str | None = None) -> Verdict:
+    if getattr(action, "unreadable", False):
+        # A Bash call whose command can't be read: fail closed.
+        return Verdict(
+            "ask",
+            "rules",
+            "the command couldn't be read from the hook input",
+            rule="unreadable",
+        )
     try:
         engine = _engine()
     except Exception as err:  # noqa: BLE001 -- bad engine config degrades to rules only
@@ -294,9 +350,18 @@ def _decide(action: Action, start: float) -> Verdict:
     else:
         engine_error = None
     rules, config_error = [], None
-    for path in (home() / "guard.toml", action.cwd / "guard.toml"):
+    for path, trusted in (
+        (home() / "guard.toml", True),
+        (action.cwd / "guard.toml", False),
+    ):
         try:
-            rules += load_user_rules(path)
+            rules += load_user_rules(path, trusted=trusted)
+            if (
+                not trusted
+                and (n := dropped_allows(path))
+                and _warn_once(session, f"repo-allow:{path}")
+            ):
+                config_error = f"ignored {n} allow rule(s) in {path}: a repo can only tighten the guard"
         except Exception as err:  # noqa: BLE001 -- a bad config must not disable built-ins
             config_error = f"ignored {path}: {err}"
     verdict = check(action, engine, rules)

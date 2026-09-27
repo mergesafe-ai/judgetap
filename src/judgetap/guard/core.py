@@ -13,7 +13,9 @@ from judgetap.engine import Engine
 from judgetap.guard.rules import (
     Outcome,
     check_command,
+    check_command_writes,
     check_content,
+    check_path,
     rules_only_check,
 )
 from judgetap.types import Question
@@ -62,6 +64,7 @@ class Action:
     content: str | None = None
     task: str | None = None
     project_rules: str | None = None
+    unreadable: bool = False  # a Bash call with no readable command
 
 
 @dataclass
@@ -85,8 +88,13 @@ class UserRule:
     reason: str
 
 
-def load_user_rules(path: Path) -> list[UserRule]:
-    """[[rule]] tables from guard.toml: pattern (regex), outcome, reason."""
+def load_user_rules(path: Path, *, trusted: bool = True) -> list[UserRule]:
+    """[[rule]] tables from guard.toml: pattern (regex), outcome, reason.
+
+    A repo's own guard.toml (trusted=False) may only tighten: its `allow`
+    rules are dropped, since anything in a cloned repo, or written by the
+    agent, could otherwise switch the built-in rules off. Only the user's
+    ~/.judgetap/guard.toml can allow. `dropped_allows(path)` reports them."""
     if not path.is_file():
         return []
     with path.open("rb") as fh:
@@ -98,6 +106,8 @@ def load_user_rules(path: Path) -> list[UserRule]:
             raise ValueError(
                 f"{path}: outcome must be hold, ask or allow, not {outcome!r}"
             )
+        if outcome == "allow" and not trusted:
+            continue  # a repo can't loosen the guard
         rules.append(
             UserRule(
                 re.compile(entry["pattern"]),
@@ -117,7 +127,8 @@ def check(
     engine: Engine | None = None,
     user_rules: list[UserRule] | None = None,
 ) -> Verdict:
-    # User rules first: an explicit "allow" is how a team overrides a built-in.
+    # User rules first: an explicit "allow" is how a team overrides a built-in,
+    # but only from the user's own config (see load_user_rules' `trusted`).
     subject = _subject(action)
     for rule in user_rules or []:
         if rule.pattern.search(subject):
@@ -126,9 +137,11 @@ def check(
             )
     hit = None
     if action.command is not None:
-        hit = check_command(action.command, action.cwd)
-    elif action.content is not None:
-        hit = check_content(action.content)
+        hit = check_command(action.command, action.cwd) or check_command_writes(
+            action.command, action.cwd
+        )
+    else:
+        hit = check_content(action.content or "") or check_path(action.path, action.cwd)
     if hit:
         outcome, name, reason = hit
         return Verdict(outcome, "rules", reason, rule=name)
@@ -214,3 +227,12 @@ def project_rules(cwd: Path) -> str | None:
         if (directory / ".git").exists():
             break
     return None
+
+
+def dropped_allows(path: Path) -> int:
+    """How many `allow` rules a repo guard.toml has (ignored when loaded untrusted)."""
+    if not path.is_file():
+        return 0
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+    return sum(1 for e in data.get("rule", []) if e.get("outcome", "hold") == "allow")
