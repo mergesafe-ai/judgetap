@@ -376,3 +376,38 @@ def test_rules_only_mode_fails_closed(command, expect):
 
     hit = rules_only_check(command)
     assert (hit[0] if hit else None) == expect
+
+
+@pytest.mark.parametrize(
+    ("command", "expect"),
+    [
+        ("git checkout -- .", "ask"),
+        ("git restore .", "ask"),
+        ("git branch -D feature", "ask"),
+        ("git stash drop", "ask"),
+        ("git worktree remove ../wt", "ask"),
+        ("sudo make deploy", "ask"),
+        ("env FOO=1 ./deploy.sh", "ask"),
+        ("git -C /work/app status", None),
+        ("git switch -c feat/x", None),
+        ("git stash", None),
+    ],
+)
+def test_rules_only_round9(command, expect):
+    from snapjudge.guard.rules import rules_only_check
+
+    hit = rules_only_check(command)
+    assert (hit[0] if hit else None) == expect
+
+
+def test_push_config_we_do_not_model_asks(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (tmp_path / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = x\n\tpush = refs/heads/*:refs/heads/main\n'
+    )
+    assert check_command("git push", tmp_path)[:2] == ("ask", "push-implicit")
+    (tmp_path / ".git" / "config").write_text("[push]\n\tdefault = matching\n")
+    assert check_command("git push", tmp_path)[:2] == ("ask", "push-implicit")
+    (tmp_path / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
+    assert check_command("git push", tmp_path) is None

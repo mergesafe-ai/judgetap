@@ -118,7 +118,7 @@ UNRESOLVABLE = re.compile(r"[$`]|^~[^/]")
 UNRESOLVABLE_NAME = re.compile(r"[$`]")
 
 
-def _commands(command: str) -> list[list[str]] | None:
+def _commands(command: str, *, unwrap: bool = True) -> list[list[str]] | None:
     """Split a shell line into simple commands; None if it cannot be parsed."""
     # Newlines separate commands; shlex would otherwise treat them as spaces.
     # Backslash-newline is a line continuation, not a command break.
@@ -135,7 +135,7 @@ def _commands(command: str) -> list[list[str]] | None:
             commands.append([])
         else:
             commands[-1].append(tok)
-    return [_unwrap(c) for c in commands if c]
+    return [_unwrap(c) if unwrap else c for c in commands if c]
 
 
 # Wrapper flags that consume the next argument (`sudo -u root rm ...`).
@@ -361,6 +361,34 @@ def upstream_branch(cwd: Path, branch: str) -> str | None:
     return merge.group(1).removeprefix("refs/heads/") if merge else None
 
 
+def _custom_push_config(cwd: Path) -> bool:
+    """True when .git/config sets anything that changes where a plain push
+    goes beyond current/upstream: remote push refspecs, pushRemote, or a
+    push.default other than simple/current/upstream."""
+    dirs = _git_dirs(cwd)
+    if dirs is None:
+        return False
+    try:
+        config = (dirs[1] / "config").read_text(errors="replace")
+    except OSError:
+        return True  # can't read it: assume the worst
+    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
+        return True
+    default = re.search(r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL)
+    if default:
+        mode = re.search(
+            r"^\s*default\s*=\s*(\S+)", default.group(1), re.MULTILINE | re.IGNORECASE
+        )
+        if mode and mode.group(1).lower() not in (
+            "simple",
+            "current",
+            "upstream",
+            "tracking",
+        ):
+            return True
+    return False
+
+
 def current_branch(cwd: Path) -> str | None:
     """The checked-out branch, read from .git/HEAD: no subprocess, so the
     rules layer stays in microseconds. None if detached or not a repo."""
@@ -432,6 +460,12 @@ def _push_rule(
                 return "ask", "push-implicit", "push destination can't be determined"
             # With push.default=upstream a plain push goes to the tracked
             # branch, which may be named differently: check both.
+            if _custom_push_config(cwd):
+                return (
+                    "ask",
+                    "push-implicit",
+                    "repo config rewrites where a plain push goes",
+                )
             upstream = upstream_branch(cwd, branch) if spec == "HEAD" else None
             protected = [b for b in (branch, upstream) if b in PROTECTED_BRANCHES]
             if protected:
@@ -610,9 +644,7 @@ SAFE_GIT = frozenset(
         "commit",
         "fetch",
         "pull",
-        "checkout",
         "switch",
-        "restore",
         "stash",
         "branch",
         "tag",
@@ -631,8 +663,26 @@ SAFE_GIT = frozenset(
         "ls-files",
         "describe",
         "cherry-pick",
-        "mv",
-        "rm",
+    }
+)
+# Arguments that turn an otherwise routine git subcommand destructive:
+# branch -D, tag -d, stash drop/clear, switch --discard-changes, worktree remove.
+DESTRUCTIVE_GIT_ARGS = frozenset(
+    {
+        "-D",
+        "-d",
+        "--delete",
+        "-M",
+        "-f",
+        "--force",
+        "--discard-changes",
+        "drop",
+        "clear",
+        "remove",
+        "prune",
+        "--prune",
+        "-x",
+        "--hard",
     }
 )
 
@@ -646,12 +696,24 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
     """
     if OPAQUE.search(command) and DESTRUCTIVE.search(command):
         return "ask", "rules-only", "no engine to judge an opaque destructive command"
-    for argv in _commands(command) or []:
-        prog = Path(argv[0]).name
-        if prog in RISKY_PROGRAMS or prog.startswith("mkfs"):
-            return "ask", "rules-only", f"no engine configured to judge {prog!r}"
-        if prog == "git":
-            sub = next((a for a in argv[1:] if not a.startswith("-")), None)
-            if sub not in SAFE_GIT:
+    command = GIT_GLOBALS.sub("git ", command)
+    # Wrappers stay visible here: `sudo make deploy` asks because of sudo.
+    for argv in _commands(command, unwrap=False) or []:
+        progs = [Path(w).name for w in argv]
+        risky = next(
+            (p for p in progs if p in RISKY_PROGRAMS or p.startswith("mkfs")), None
+        )
+        if risky and progs.index(risky) <= _first_command_index(argv):
+            return "ask", "rules-only", f"no engine configured to judge {risky!r}"
+        if "git" in progs:
+            i = progs.index("git")
+            sub = next((a for a in argv[i + 1 :] if not a.startswith("-")), None)
+            args = set(argv[i + 1 :])
+            if sub not in SAFE_GIT or args & DESTRUCTIVE_GIT_ARGS:
                 return "ask", "rules-only", f"no engine configured to judge 'git {sub}'"
     return None
+
+
+def _first_command_index(argv: list[str]) -> int:
+    """Index of the command a wrapper chain finally runs."""
+    return len(argv) - len(_unwrap(argv))
