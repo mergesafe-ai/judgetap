@@ -48,5 +48,5 @@ By contributing you agree your work is licensed under Apache-2.0.
 ## Releases
 
 - Every merge to `main` publishes a dev build to PyPI (`X.Y.Z.devN`), except merging the release PR itself, which publishes the stable version instead. `pip install judgetap` ignores it; `pip install --pre judgetap` gets it.
-- A stable version is published only when a GitHub Release is created: release-please keeps a release PR open with the next version and the changelog, built from conventional commit titles, and merging it tags and publishes. A release published by hand in GitHub is published the same way, after checking the tag matches the package version.
+- A stable version is published only when a GitHub Release is created: release-please keeps a release PR open with the next version and the changelog, built from conventional commit titles, and merging it tags and publishes. A release published by hand in GitHub is published the same way, after checking the tag matches the package version. If a stable publish fails, re-run it from Actions → release → "Run workflow" with the release tag; it only publishes a tag that has a GitHub Release.
 - Publishing uses PyPI Trusted Publishing (OIDC): no tokens are stored anywhere.
