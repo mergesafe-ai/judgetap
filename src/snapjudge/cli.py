@@ -14,27 +14,50 @@ from pathlib import Path
 def _guard_hook(args) -> int:
     from snapjudge.guard.hook import run
 
-    return run()
+    return run(agent=args.agent)
+
+
+def _agents(args) -> list[str]:
+    from snapjudge.guard.install import detected_agents
+
+    if args.agent != "all":
+        return [args.agent]
+    found = detected_agents()
+    if not found:
+        print("No agent config directory found (~/.claude, ~/.cursor, ~/.codex).")
+    return found
 
 
 def _guard_install(args) -> int:
-    from snapjudge.guard.install import install, settings_path
+    from snapjudge.guard.install import (
+        install,
+        settings_path,
+    )
 
-    path = settings_path(args.scope, Path.cwd())
-    added = install(path)
-    print(f"{'Installed' if added else 'Already installed'}: {path}")
+    for agent in _agents(args):
+        path = settings_path(args.scope, Path.cwd(), agent)
+        added = install(path, agent)
+        print(f"{agent}: {'installed' if added else 'already installed'} in {path}")
+        if agent == "codex":
+            print("  codex: review and trust the new hook with /hooks before it runs.")
     print(
         "Engine: set SNAPJUDGE_ENGINE (e.g. 'jev' with TYPESAFE_API_KEY) for judgements;"
     )
-    print("without it the guard runs its rules only. Check with: snapjudge guard test")
+    print("without it the guard runs its rules only, which ask when unsure.")
+    print("Check with: snapjudge guard test")
     return 0
 
 
 def _guard_uninstall(args) -> int:
     from snapjudge.guard.install import settings_path, uninstall
 
-    path = settings_path(args.scope, Path.cwd())
-    print(("Removed from " if uninstall(path) else "Not installed in ") + str(path))
+    for agent in _agents(args):
+        path = settings_path(args.scope, Path.cwd(), agent)
+        print(
+            f"{agent}: "
+            + ("removed from " if uninstall(path, agent) else "not installed in ")
+            + str(path)
+        )
     return 0
 
 
@@ -121,13 +144,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     guard = sub.add_parser("guard", help="pre-action guard for coding agents")
     gsub = guard.add_subparsers(dest="guard_command", required=True)
-    gsub.add_parser("hook", help="run as a Claude Code PreToolUse hook").set_defaults(
-        func=_guard_hook
+    hook = gsub.add_parser("hook", help="run as an agent's pre-action hook")
+    hook.add_argument(
+        "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
     )
+    hook.set_defaults(func=_guard_hook)
     for name, func in (("install", _guard_install), ("uninstall", _guard_uninstall)):
         p = gsub.add_parser(name, help=f"{name} the Claude Code hook")
         p.add_argument(
-            "--for", dest="agent", choices=["claude-code"], default="claude-code"
+            "--for",
+            dest="agent",
+            choices=["claude-code", "cursor", "codex", "all"],
+            default="claude-code",
         )
         p.add_argument("--scope", choices=["user", "project"], default="user")
         p.set_defaults(func=func)
