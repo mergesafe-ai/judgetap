@@ -1,0 +1,27 @@
+name: demo
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install .
+      - uses: charmbracelet/vhs-action@v2
+        with:
+          path: docs/demo.tape
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "docs: render demo GIF"
+          title: "docs: render demo GIF"
+          body: "Rendered from docs/demo.tape by the demo workflow. Uncomment the image line in README.md when merging."
+          branch: docs/demo-gif
+          add-paths: docs/demo.gif
