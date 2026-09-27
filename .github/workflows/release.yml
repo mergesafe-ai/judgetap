@@ -49,12 +49,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv lock
       - name: Commit the refreshed lockfile
+        env:
+          BRANCH: ${{ needs.release-please.outputs.pr_branch }}
         run: |
           git diff --quiet uv.lock && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: refresh uv.lock for the release" uv.lock
-          git push
+          git push origin "HEAD:refs/heads/$BRANCH"
 
   # Stable: the release-please release (created with GITHUB_TOKEN, which
   # doesn't trigger `release` events, so no double publish) or a release
