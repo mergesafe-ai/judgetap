@@ -6,7 +6,7 @@ import json
 import math
 import os
 import threading
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -83,7 +83,11 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     outcomes: Counter = Counter()
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
     calls: Counter = Counter()
-    seen_calls: set[str] = set()  # true totals; the latency deques are capped
+    # A batch's records are written together, so remembering the last few
+    # (call, engine) pairs is enough to count each once: memory stays bounded.
+    seen_calls: OrderedDict[tuple[str, str], None] = (
+        OrderedDict()
+    )  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds, library = 0.0, 0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
@@ -97,9 +101,11 @@ def _load(home: Path, today: date) -> dict[str, Any]:
             # verdicts: counted apart, kept out of hold/ask/allow and the chart.
             library += 1
             # A batch is one engine call: count it (and its latency) once.
-            call = r.get("call") or r["id"]
-            if r.get("engine") and call not in seen_calls:
-                seen_calls.add(call)
+            key = (r.get("call") or r["id"], r.get("engine") or "")
+            if r.get("engine") and key not in seen_calls:
+                seen_calls[key] = None
+                if len(seen_calls) > 256:
+                    seen_calls.popitem(last=False)
                 by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
                 calls[r["engine"]] += 1
             continue

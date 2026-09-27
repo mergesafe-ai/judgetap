@@ -165,3 +165,25 @@ def test_async_scheduling_failure_does_not_fail_the_decision(tmp_path, monkeypat
         sj.ayesno("q", engine=StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}))
     )
     assert d.value == "yes"
+
+
+def test_cascade_batch_counts_each_engine(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.dashboard.data import load
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    cheap = StaticEngine(
+        lambda q, c: (
+            {"yes": 0.99, "no": 0.01} if q.text == "easy" else {"yes": 0.5, "no": 0.5}
+        ),
+        name="cheap",
+    )
+    strong = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="strong")
+    sj.batch(
+        [sj.Question.yesno("easy"), sj.Question.yesno("hard")],
+        engine=sj.Cascade([cheap, strong]),
+    )
+    engines = load(tmp_path)["summary"]["engines"]
+    assert engines["cheap"]["calls"] == 1 and engines["strong"]["calls"] == 1
