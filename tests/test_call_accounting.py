@@ -106,3 +106,28 @@ def test_invalid_callback_output_keeps_the_cascades_calls(run_async):
         else:
             jt.yesno("x", engine=c)
     assert [x.engine for x in info.value.calls] == ["a", "b"]
+
+
+def test_nested_unknown_cost_makes_the_total_unknown():
+    from dataclasses import replace
+
+    import judgetap as jt
+    from judgetap.testing import StaticEngine
+
+    class Priced(StaticEngine):
+        def __init__(self, f, name, cost):
+            super().__init__(f, name=name)
+            self.cost = cost
+
+        def decide(self, qs, ctx):
+            return [replace(r, cost_usd=self.cost) for r in super().decide(qs, ctx)]
+
+    unpriced = StaticEngine(
+        lambda q, c: {"yes": 0.5, "no": 0.5}, name="unpriced"
+    )  # cost None
+    inner = jt.Cascade([unpriced], name="inner")
+    outer = jt.Cascade(
+        [inner, Priced(lambda q, c: {"yes": 0.95, "no": 0.05}, "big", 0.10)]
+    )
+    d = jt.yesno("q", engine=outer)
+    assert d.cost_usd is None

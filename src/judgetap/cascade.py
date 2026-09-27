@@ -45,6 +45,9 @@ class Attempt:
     # which engines it consulted, so the outer cascade keeps both.
     cost_usd: float | None = None
     hops: tuple[str, ...] = ()
+    # False when the nested cascade paid for an answer whose price is unknown:
+    # cost_usd is then None because the total is unknown, not because it is 0.
+    cost_known: bool = True
 
 
 @dataclass
@@ -58,6 +61,7 @@ class QuestionFailed:
     cost_usd: float | None = None
     hops: tuple[str, ...] = ()
     calls: tuple[Call, ...] = ()
+    cost_known: bool = True  # see Attempt.cost_known
 
 
 Fallback = Callable[[Question, Sequence[Attempt]], Mapping[str, float]]
@@ -146,7 +150,13 @@ class Cascade:
                 results.append(self._finish(q, a))
             except CascadeExhaustedError as err:
                 results.append(
-                    QuestionFailed(err, cost_usd=_spent(a), hops=_hops(a), calls=calls)
+                    QuestionFailed(
+                        err,
+                        cost_usd=_spent(a),
+                        hops=_hops(a),
+                        calls=calls,
+                        cost_known=_cost_known(a),
+                    )
                 )
             except Exception as err:
                 # An on_exhausted callback that raised or returned garbage:
@@ -194,6 +204,7 @@ class Cascade:
                         error=raw.error,
                         cost_usd=raw.cost_usd,
                         hops=raw.hops,
+                        cost_known=raw.cost_known,
                     )
                 )
                 continue
@@ -265,9 +276,18 @@ def _hops(attempts: Sequence[Attempt]) -> tuple[str, ...]:
     return tuple(hops)
 
 
+def _cost_known(attempts: Sequence[Attempt]) -> bool:
+    """False if anything paid for on this question has an unknown price."""
+    if any(not a.cost_known for a in attempts):
+        return False
+    return all(a.answer.cost_usd is not None for a in attempts if a.answer is not None)
+
+
 def _spent(attempts: Sequence[Attempt]) -> float | None:
     """Everything paid for on a question, not just the winner (including what
     a nested cascade spent before giving up); None if any part is unknown."""
+    if not _cost_known(attempts):
+        return None  # part of the spend is unknown, including inside a nested cascade
     costs = [a.answer.cost_usd for a in attempts if a.answer is not None]
     # A nested cascade's spend on a question it gave up on; when it paid for
     # nothing (every engine errored) there is nothing to add.
