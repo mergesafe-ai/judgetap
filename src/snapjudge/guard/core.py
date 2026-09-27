@@ -162,7 +162,11 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         keys.remove("breaks_rule")
     start = time.perf_counter()
     try:
-        decisions = batch([QUESTIONS[k] for k in keys], context, engine=engine)
+        # log=False: the guard writes its own record; its judge questions aren't
+        # library decisions.
+        decisions = batch(
+            [QUESTIONS[k] for k in keys], context, engine=engine, log=False
+        )
     except Exception as err:  # noqa: BLE001 -- the judge must never break the agent
         # Fail closed like rules-only mode: an unreachable judge is no engine.
         error = f"{type(err).__name__}: {err}"

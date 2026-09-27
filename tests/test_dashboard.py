@@ -201,7 +201,7 @@ def test_non_string_id_is_400(server):
 def test_page_has_filter_labels_and_status(server):
     base, _ = server
     body = call(base + "/")[1].decode()
-    assert body.count("<label>") == 3 and 'role="status"' in body
+    assert body.count("<label>") == 4 and 'role="status"' in body
 
 
 def test_engine_calls_are_counted_past_the_latency_cap(tmp_path, monkeypatch):
@@ -257,3 +257,116 @@ def test_bad_content_length_is_400(server):
 def test_page_has_empty_chart_message(server):
     base, _ = server
     assert b"No guarded calls in the last 30 days" in call(base + "/")[1]
+
+
+def test_library_records_are_counted_apart(tmp_path):
+    from snapjudge.dashboard.data import load
+
+    rows = [
+        {
+            "id": "g1",
+            "ts": "2026-09-26T10:00:00+00:00",
+            "outcome": "hold",
+            "layer": "rules",
+        },
+        {
+            "id": "l1",
+            "ts": "2026-09-26T10:00:01+00:00",
+            "source": "library",
+            "outcome": "hold",
+            "layer": "library",
+            "engine": "jev",
+            "latency_ms": 100,
+        },
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    s = load(tmp_path, today=__import__("datetime").date(2026, 9, 26))
+    assert s["summary"]["total"] == 1 and s["summary"]["library"] == 1
+    assert s["summary"]["outcomes"] == {"hold": 1}
+    assert s["summary"]["per_day"]["2026-09-26"] == {"hold": 1}
+    assert (
+        "jev" not in s["summary"]["engines"]
+    )  # library calls stay out of the guard engine table
+    assert {r["source"] for r in s["recent"]} == {"guard", "library"}
+
+
+def test_library_hold_cannot_be_marked_false_alarm(tmp_path):
+    rows = [
+        {
+            "id": "l1",
+            "ts": "2026-09-26T10:00:01+00:00",
+            "source": "library",
+            "outcome": "hold",
+            "layer": "library",
+        }
+    ]
+    (tmp_path / "guard.jsonl").write_text(json.dumps(rows[0]) + "\n")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(tmp_path, "tok", port))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, _ = call(
+            f"http://127.0.0.1:{port}/api/false-alarm",
+            "POST",
+            b'{"id": "l1"}',
+            {"X-Snapjudge-Token": "tok", "Content-Type": "application/json"},
+        )
+        assert status == 404
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.mark.parametrize("length", ["²", None])
+def test_content_length_must_be_ascii_digits_and_present(server, length):
+    import http.client
+
+    _, port = server
+    conn = http.client.HTTPConnection("127.0.0.1", port)
+    conn.putrequest("POST", "/api/false-alarm", skip_accept_encoding=True)
+    conn.putheader("X-Snapjudge-Token", "tok")
+    if length is not None:
+        conn.putheader("Content-Length", length.encode("utf-8").decode("latin-1"))
+    conn.endheaders()
+    assert conn.getresponse().status == 400
+    conn.close()
+
+
+def test_cache_is_safe_under_concurrent_loads(tmp_path):
+    from snapjudge.dashboard import data
+
+    log = tmp_path / "guard.jsonl"
+    log.write_text(json.dumps(ROWS[0]) + "\n")
+    errors = []
+
+    def reader():
+        try:
+            for _ in range(200):
+                data.load(tmp_path)
+        except Exception as err:  # noqa: BLE001
+            errors.append(err)
+
+    def writer():
+        for i in range(50):
+            with log.open("a") as fh:
+                fh.write(json.dumps({**ROWS[1], "id": f"w{i}"}) + "\n")
+
+    threads = [threading.Thread(target=reader) for _ in range(4)] + [
+        threading.Thread(target=writer)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+
+
+def test_outcome_filter_is_built_from_records(server):
+    base, _ = server
+    page = call(base + "/")[1]
+    assert (
+        b"function outcomeOptions" in page
+        and b'<select id="f-outcome"><option value="">All</option></select>' in page
+    )

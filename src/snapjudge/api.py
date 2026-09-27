@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from collections.abc import Sequence
 
+from snapjudge import decision_log
 from snapjudge.engine import Context, Engine, RawAnswer
 from snapjudge.errors import InvalidAnswerError, NoEngineError
 from snapjudge.types import Decision, Question
@@ -15,17 +17,35 @@ from snapjudge.types import Decision, Question
 SUM_TOLERANCE = 1e-3
 
 _default_engine: Engine | None = None
+_log = False
 
 
-def configure(engine: Engine | None) -> None:
+def configure(engine: Engine | None, *, log: bool = False) -> None:
     """Set the process-wide default engine; None clears it.
 
-    A call's own `engine=` argument always takes precedence. Engine adapters
-    and file/env configuration arrive with #2; until then an engine is any
-    object implementing `snapjudge.Engine`.
+    A call's own `engine=` argument always takes precedence. With `log=True`
+    (or SNAPJUDGE_LOG=1) each decision is appended to the local decision log
+    that `snapjudge dashboard` reads; the context is never logged.
     """
-    global _default_engine
+    global _default_engine, _log
     _default_engine = engine
+    _log = log
+
+
+def _finish(decisions: list[Decision], log: bool) -> list[Decision]:
+    if log and decision_log.enabled(_log):
+        decision_log.record(decisions)
+    return decisions
+
+
+async def _afinish(decisions: list[Decision], log: bool) -> list[Decision]:
+    # File writes stay off the event loop.
+    if log and decision_log.enabled(_log):
+        try:
+            await asyncio.to_thread(decision_log.record, decisions)
+        except RuntimeError:
+            pass  # executor gone (shutdown): logging must never fail a decision
+    return decisions
 
 
 def _resolve(engine: Engine | None) -> Engine:
@@ -95,15 +115,19 @@ def batch(
     context: Context = None,
     *,
     engine: Engine | None = None,
+    log: bool = True,
 ) -> list[Decision]:
-    """Answer several questions over one context, in one engine call."""
+    """Answer several questions over one context, in one engine call.
+
+    `log=False` keeps the call out of the decision log (the guard uses it
+    for its own judge questions, which it logs as one guard record)."""
     if not questions:
         return []
     chosen = _resolve(engine)
     start = time.perf_counter()
     answers = chosen.decide(questions, context)
     latency_ms = (time.perf_counter() - start) * 1000
-    return _decisions(questions, answers, chosen, latency_ms)
+    return _finish(_decisions(questions, answers, chosen, latency_ms), log)
 
 
 async def abatch(
@@ -111,6 +135,7 @@ async def abatch(
     context: Context = None,
     *,
     engine: Engine | None = None,
+    log: bool = True,
 ) -> list[Decision]:
     if not questions:
         return []
@@ -118,7 +143,7 @@ async def abatch(
     start = time.perf_counter()
     answers = await chosen.adecide(questions, context)
     latency_ms = (time.perf_counter() - start) * 1000
-    return _decisions(questions, answers, chosen, latency_ms)
+    return await _afinish(_decisions(questions, answers, chosen, latency_ms), log)
 
 
 def choice(

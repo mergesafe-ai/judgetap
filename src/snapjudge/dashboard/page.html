@@ -39,11 +39,12 @@ button { background:none; border:1px solid var(--line); color:var(--accent); bor
   <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted status" role="status">Loading…</span></p>
   <div class="tiles" id="tiles"></div>
   <section><h2>Last 30 days</h2><div class="days" id="days"></div></section>
-  <section><h2>Engines (judge calls)</h2><div class="wrap"><table id="engines"></table></div></section>
+  <section><h2>Engines (guard judge calls)</h2><div class="wrap"><table id="engines"></table></div></section>
   <section>
     <h2>Recent decisions</h2>
     <div class="filters">
-      <label>Outcome <select id="f-outcome"><option value="">All</option><option>hold</option><option>ask</option><option>allow</option></select></label>
+      <label>Outcome <select id="f-outcome"><option value="">All</option></select></label>
+      <label>Source <select id="f-source"><option value="">All</option><option value="guard">Guard</option><option value="library">Library</option></select></label>
       <label>Layer <select id="f-layer"><option value="">All</option><option>rules</option><option>judge</option><option>skip</option><option>none</option></select></label>
       <label>Search <input id="f-text" placeholder="Command or reason"></label>
     </div>
@@ -60,7 +61,7 @@ const fmt = (n, d = 0) => n == null ? "–" : Number(n).toFixed(d);
 function tiles(s) {
   const o = s.outcomes || {};
   const items = [["Guarded calls", s.total], ["Holds", o.hold || 0], ["Asks", o.ask || 0],
-    ["Holds / 1,000", fmt(s.holds_per_1000, 1)], ["False alarms", s.false_alarms], ["Engine cost", "$" + fmt(s.cost_usd, 4)]];
+    ["Holds / 1,000", fmt(s.holds_per_1000, 1)], ["False alarms", s.false_alarms], ["Library decisions", s.library || 0], ["Engine cost", "$" + fmt(s.cost_usd, 4)]];
   $("tiles").innerHTML = items.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
 }
 function days(perDay) {
@@ -79,16 +80,23 @@ function engines(e) {
   const rows = Object.entries(e).map(([n, v]) => `<tr><td>${esc(n)}</td><td>${v.calls}</td><td>${fmt(v.p50_ms)} ms</td><td>${fmt(v.p95_ms)} ms</td></tr>`);
   $("engines").innerHTML = rows.length ? `<tr><th>Engine</th><th>Calls</th><th>p50</th><th>p95</th></tr>${rows.join("")}` : '<tr><td class="muted">No judge calls yet (no engine configured, or nothing reached the judge).</td></tr>';
 }
+function outcomeOptions() {
+  // Guard verdicts plus whatever answers library calls returned.
+  const sel = $("f-outcome"), current = sel.value;
+  const values = [...new Set(["hold", "ask", "allow", ...data.recent.map((r) => r.outcome).filter(Boolean)])];
+  sel.innerHTML = '<option value="">All</option>' + values.map((v) => `<option>${esc(v)}</option>`).join("");
+  sel.value = values.includes(current) ? current : "";
+}
 function recent() {
-  const o = $("f-outcome").value, l = $("f-layer").value, t = $("f-text").value.toLowerCase();
-  const rows = data.recent.filter((r) => (!o || r.outcome === o) && (!l || r.layer === l) &&
+  const o = $("f-outcome").value, l = $("f-layer").value, src = $("f-source").value, t = $("f-text").value.toLowerCase();
+  const rows = data.recent.filter((r) => (!o || r.outcome === o) && (!l || r.layer === l) && (!src || r.source === src) &&
     (!t || (r.subject || "").toLowerCase().includes(t) || (r.reason || "").toLowerCase().includes(t)));
-  $("recent").innerHTML = `<tr><th>When</th><th>Outcome</th><th>Tool</th><th>Command / file</th><th>Why</th><th>Layer</th><th></th></tr>` +
+  $("recent").innerHTML = `<tr><th>When</th><th>Outcome</th><th>Tool</th><th>Command / file</th><th>Why</th><th>Layer</th><th>Source</th><th></th></tr>` +
     rows.map((r) => `<tr><td>${esc((r.ts || "").replace("T", " ").slice(0, 19))}</td>
       <td class="badge ${esc(r.outcome)}">${esc(r.outcome)}</td><td>${esc(r.tool)}</td>
       <td class="subject">${esc(r.subject)}</td><td>${esc(r.reason)}${r.error ? ` <span class="muted">(${esc(r.error)})</span>` : ""}</td>
-      <td>${esc(r.layer)}${r.engine ? ` · ${esc(r.engine)}` : ""}</td>
-      <td>${r.outcome === "hold" ? (r.false_alarm ? '<span class="muted">false alarm</span>' : `<button data-id="${esc(r.id)}">False alarm</button>`) : ""}</td></tr>`).join("");
+      <td>${esc(r.layer)}${r.engine ? ` · ${esc(r.engine)}` : ""}</td><td>${esc(r.source)}</td>
+      <td>${r.source === "guard" && r.outcome === "hold" ? (r.false_alarm ? '<span class="muted">false alarm</span>' : `<button data-id="${esc(r.id)}">False alarm</button>`) : ""}</td></tr>`).join("");
 }
 let lastOk = null;
 async function refresh() {
@@ -97,7 +105,7 @@ async function refresh() {
     const res = await fetch("/api/data");
     if (!res.ok) throw new Error("HTTP " + res.status);
     data = await res.json();
-    tiles(data.summary); days(data.summary.per_day); engines(data.summary.engines); recent();
+    tiles(data.summary); outcomeOptions(); days(data.summary.per_day); engines(data.summary.engines); recent();
     lastOk = new Date();
     status.textContent = "Updated " + lastOk.toLocaleTimeString();
     status.classList.remove("error");
@@ -115,7 +123,7 @@ $("recent").addEventListener("click", async (e) => {
   if (!res || !res.ok) { $("updated").classList.add("error"); $("updated").textContent = "Couldn't save the false alarm; try again."; return; }
   refresh();
 });
-["f-outcome", "f-layer", "f-text"].forEach((id) => $(id).addEventListener("input", recent));
+["f-outcome", "f-layer", "f-source", "f-text"].forEach((id) => $(id).addEventListener("input", recent));
 refresh(); setInterval(refresh, 10000);
 </script>
 </body>

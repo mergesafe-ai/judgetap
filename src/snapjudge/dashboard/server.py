@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -65,9 +66,10 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
                 return self._json(403, {"error": "bad token"})
             if self.path != "/api/false-alarm":
                 return self._json(404, {"error": "not found"})
-            raw_length = self.headers.get("Content-Length") or "0"
-            if not raw_length.isdigit():
-                return self._json(400, {"error": "bad content-length"})
+            raw_length = self.headers.get("Content-Length")
+            # ASCII digits only: str.isdigit() also accepts "²", which int() rejects.
+            if raw_length is None or not re.fullmatch(r"[0-9]+", raw_length):
+                return self._json(400, {"error": "missing or bad content-length"})
             length = int(raw_length)
             if length > MAX_BODY:
                 return self._json(413, {"error": "too large"})
@@ -78,7 +80,9 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
             if not isinstance(rid, str):
                 return self._json(400, {"error": "id must be a string"})
             known = {
-                r["id"] for r in load(home)["recent"] if r.get("outcome") == "hold"
+                r["id"]
+                for r in load(home)["recent"]
+                if r.get("source") == "guard" and r.get("outcome") == "hold"
             }
             if not mark_false_alarm(home, rid, known):
                 return self._json(404, {"error": "no such hold"})

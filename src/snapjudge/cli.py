@@ -152,6 +152,8 @@ def _guard_stats(args) -> int:
                 r = json.loads(line)
             except ValueError:
                 continue  # a line cut off by a concurrent write
+            if r.get("source") == "library":
+                continue  # library decisions share the log but aren't guarded calls
             total += 1
             outcomes[r["outcome"]] += 1
             layers[r["layer"]] += 1
