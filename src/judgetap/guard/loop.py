@@ -117,10 +117,7 @@ def prune_sessions(directory: Path, now: float | None = None) -> None:
             try:
                 if now - f.stat().st_mtime <= SESSION_TTL_SECONDS:
                     continue
-                if f.suffix == ".tmp":
-                    f.unlink(missing_ok=True)  # a week-old temp file is an orphan
-                else:
-                    _unlink_if_unlocked(f)
+                _unlink_if_unlocked(f)
             except OSError:
                 continue
     except OSError:
@@ -129,7 +126,9 @@ def prune_sessions(directory: Path, now: float | None = None) -> None:
 
 def _unlink_if_unlocked(f: Path) -> None:
     """Remove f only while holding its session lock (non-blocking)."""
-    lock = f.with_suffix(".lock")  # the same path _session_lock uses for json and stop
+    # The session's lock (what _session_lock uses): `<id>.lock`, also for a
+    # temp file named `<id>.<uuid>.tmp` that a suspended hook may still own.
+    lock = f.with_name(f.name.split(".", 1)[0] + ".lock")
     fd = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
     try:
         try:

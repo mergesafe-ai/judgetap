@@ -340,4 +340,29 @@ def test_prune_keeps_locks_and_skips_busy_sessions(tmp_path):
     finally:
         os.close(fd)
     left = sorted(p.name for p in tmp_path.iterdir() if p.name != ".pruned")
-    assert left == ["busy.json", "busy.lock", "idle.lock"]
+    # x.lock: created to take the orphan temp file's session lock before deleting it.
+    assert left == ["busy.json", "busy.lock", "idle.lock", "x.lock"]
+
+
+def test_prune_leaves_a_temp_file_whose_session_is_locked(tmp_path):
+    import fcntl
+    import os
+    import time
+
+    from judgetap.guard.loop import SESSION_TTL_SECONDS, prune_sessions
+
+    old = time.time() - SESSION_TTL_SECONDS - 100
+    tmp = tmp_path / "busy.0123abcd.tmp"
+    lock = tmp_path / "busy.lock"
+    for p in (tmp, lock):
+        p.write_text("x")
+        os.utime(p, (old, old))
+    fd = os.open(lock, os.O_WRONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        prune_sessions(tmp_path)
+    finally:
+        os.close(fd)
+    assert tmp.exists()
+    prune_sessions(tmp_path, now=time.time() + 7200)  # next sweep, lock free
+    assert not tmp.exists()
