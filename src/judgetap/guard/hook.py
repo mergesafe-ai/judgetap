@@ -24,8 +24,7 @@ from judgetap.guard.core import (
     Action,
     Verdict,
     check,
-    dropped_allows,
-    load_user_rules,
+    load_rules_counting_allows,
     project_rules,
 )
 from judgetap.guard.rules import redact
@@ -56,11 +55,15 @@ def action_from_hook(payload: dict[str, Any]) -> Action | None:
     action = Action(tool=tool, cwd=cwd)
     if tool == "Bash":
         command = inp.get("command")
-        # None means the command couldn't be read: _decide asks rather than allows.
-        action.command = None if command is None else _text(command)
-        action.unreadable = command is None
+        # Only a nonempty string can be inspected; anything else asks.
+        readable = isinstance(command, str) and bool(command.strip())
+        action.command = command if readable else None
+        action.unreadable = not readable
     else:
-        action.path = _text(inp.get("file_path")) or None
+        path = inp.get("file_path")
+        action.path = path if isinstance(path, str) and path.strip() else None
+        # A write whose destination can't be read can't be checked: ask.
+        action.unreadable = action.path is None
         if tool == "Write":
             action.content = _text(inp.get("content"))
         elif tool == "Edit":
@@ -214,17 +217,21 @@ def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
     if agent == "cursor":  # beforeShellExecution: {command, cwd, ...}
         return {
             "tool_name": "Bash",
-            "tool_input": {"command": payload.get("command", "")},
+            # Missing stays None, so the guard asks instead of checking "".
+            "tool_input": {"command": payload.get("command")},
             "cwd": payload.get("cwd"),
             "session_id": payload.get("conversation_id"),
             "transcript_path": payload.get("transcript_path"),
         }
     if agent == "codex" and payload.get("tool_name") in CODEX_SHELL_TOOLS:
         # Codex's shell tool is exec_command with tool_input.cmd (str or argv).
-        inp = payload.get("tool_input") or {}
-        cmd = inp.get("cmd", inp.get("command", ""))
-        if isinstance(cmd, list):
+        inp = payload.get("tool_input")
+        inp = inp if isinstance(inp, dict) else {}
+        cmd = inp.get("cmd", inp.get("command"))
+        if isinstance(cmd, list) and cmd:
             cmd = shlex.join(str(c) for c in cmd)
+        elif not isinstance(cmd, str):
+            cmd = None  # missing or not a command: unreadable, so the guard asks
         return {**payload, "tool_name": "Bash", "tool_input": {"command": cmd}}
     return payload  # Claude Code's PreToolUse shape
 
@@ -261,6 +268,8 @@ def respond(
             reason = _reason(verdict)
             if verdict.outcome == "ask":
                 reason += " Ask the user before running it."
+            if note:
+                reason += f" ({verdict.error})"  # warnings aren't lost on a deny
             return None, 2, reason
         return {}, 0, note
     out = {}
@@ -336,11 +345,12 @@ def _warn_once(session: str | None, key: str) -> bool:
 
 def _decide(action: Action, start: float, session: str | None = None) -> Verdict:
     if getattr(action, "unreadable", False):
-        # A Bash call whose command can't be read: fail closed.
+        # A command or destination that can't be read: fail closed.
+        what = "command" if action.tool == "Bash" else "destination file"
         return Verdict(
             "ask",
             "rules",
-            "the command couldn't be read from the hook input",
+            f"the {what} couldn't be read from the hook input",
             rule="unreadable",
         )
     try:
@@ -355,19 +365,18 @@ def _decide(action: Action, start: float, session: str | None = None) -> Verdict
         (action.cwd / "guard.toml", False),
     ):
         try:
-            rules += load_user_rules(path, trusted=trusted)
-            if (
-                not trusted
-                and (n := dropped_allows(path))
-                and _warn_once(session, f"repo-allow:{path}")
-            ):
+            loaded, n = load_rules_counting_allows(path, trusted=trusted)
+            rules += loaded
+            if n and _warn_once(session, f"repo-allow:{path}"):
                 config_error = f"ignored {n} allow rule(s) in {path}: a repo can only tighten the guard"
         except Exception as err:  # noqa: BLE001 -- a bad config must not disable built-ins
             config_error = f"ignored {path}: {err}"
     verdict = check(action, engine, rules)
-    problem = engine_error or config_error
-    if problem and not verdict.error:
-        verdict.error = problem
+    # Keep every problem: an engine error must not hide a config warning that
+    # _warn_once has already marked as shown for this session.
+    problems = [p for p in (verdict.error, engine_error, config_error) if p]
+    if problems:
+        verdict.error = "; ".join(problems)
         verdict.reason = verdict.reason or "engine unavailable; rules only"
     verdict.latency_ms = verdict.latency_ms or (time.perf_counter() - start) * 1000
     return verdict
