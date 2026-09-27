@@ -26,12 +26,37 @@ jobs:
     outputs:
       released: ${{ steps.rp.outputs.release_created }}
       tag: ${{ steps.rp.outputs.tag_name }}
+      pr_branch: ${{ steps.rp.outputs.pr && fromJSON(steps.rp.outputs.pr).headBranchName || '' }}
     steps:
       - id: rp
         uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # release-please bumps pyproject.toml but can't edit uv.lock's package
+  # table, so relock the release PR's branch whenever release-please updates it.
+  relock:
+    needs: release-please
+    if: github.event_name == 'push' && needs.release-please.outputs.pr_branch != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.pr_branch }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock
+      - name: Commit the refreshed lockfile
+        env:
+          BRANCH: ${{ needs.release-please.outputs.pr_branch }}
+        run: |
+          git diff --quiet uv.lock && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: refresh uv.lock for the release" uv.lock
+          git push origin "HEAD:refs/heads/$BRANCH"
 
   # Stable: the release-please release (created with GITHUB_TOKEN, which
   # doesn't trigger `release` events, so no double publish) or a release
