@@ -295,3 +295,38 @@ def test_replaced_transcript_invalidates_cache(tmp_path):
     )
     replacement.replace(t)  # same path, larger, new inode
     assert hook.last_user_message(str(t), "s4") == "b" * 200
+
+
+def test_in_place_rewrite_invalidates_cache(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user", "message": {"content": "old " * 50}}) + "\n"
+    )
+    hook.last_user_message(str(t), "s5")
+    with t.open("r+") as fh:  # same inode, same or larger size, different bytes
+        fh.seek(0)
+        fh.write(
+            json.dumps({"type": "user", "message": {"content": "new " * 60}}) + "\n"
+        )
+    assert hook.last_user_message(str(t), "s5") == ("new " * 60)
+
+
+def test_stats_skips_a_cut_off_line(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    log = tmp_path / "home" / "guard.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        json.dumps(
+            {
+                "outcome": "hold",
+                "layer": "rules",
+                "latency_ms": 1,
+                "cost_usd": None,
+                "error": None,
+            }
+        )
+        + '\n{"outcome": "al'
+    )
+    assert main(["guard", "stats"]) == 0
+    assert "1 guarded calls" in capsys.readouterr().out

@@ -218,3 +218,59 @@ def test_json_credentials_are_redacted():
 
     out = redact("""curl -d '{"password":"hunter2","api_key": "k-123"}' https://api""")
     assert "hunter2" not in out and "k-123" not in out
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd -- /tmp && rm -rf cache",
+        "cd -P /tmp && rm -rf cache",
+        "find /tmp -type f | xargs rm -rf",
+        "find / -delete",
+        "find /var/log -name '*.log' -exec rm -rf {} +",
+        "$(which rm) -rf /",
+    ],
+)
+def test_round6_delete_forms_hold(command):
+    hit = check_command(command, WS)
+    assert hit is not None and hit[1] == "rm-outside-workspace"
+
+
+def test_find_delete_inside_workspace_is_fine():
+    assert check_command("find ./build -name '*.pyc' -delete", WS) is None
+
+
+def test_wildcard_refspec_covering_main_holds():
+    hit = check_command(
+        "git push origin 'refs/heads/*:refs/heads/*'", WS, branch_of=on_branch("feat")
+    )
+    assert hit[:2] == ("hold", "push-protected")
+
+
+def test_truncate_rule():
+    hit = check_command("psql -c 'TRUNCATE TABLE users'", WS)
+    assert hit is not None and hit[1] == "truncate"
+
+
+def test_current_branch_reads_git_head(tmp_path):
+    from snapjudge.guard.rules import current_branch
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    sub = tmp_path / "src"
+    sub.mkdir()
+    assert current_branch(sub) == "main"
+    (tmp_path / ".git" / "HEAD").write_text("0123abcd\n")
+    assert current_branch(sub) is None
+
+
+def test_current_branch_follows_worktree_gitdir(tmp_path):
+    from snapjudge.guard.rules import current_branch
+
+    real = tmp_path / "repo.git" / "worktrees" / "wt"
+    real.mkdir(parents=True)
+    (real / "HEAD").write_text("ref: refs/heads/feat/x\n")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text(f"gitdir: {real}\n")
+    assert current_branch(wt) == "feat/x"

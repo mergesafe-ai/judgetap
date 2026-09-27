@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import shlex
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,6 +115,8 @@ SHELL_STRING = re.compile(
 )
 # Anything the shell rewrites before rm sees it: we cannot know the real path.
 UNRESOLVABLE = re.compile(r"[$`]|^~[^/]")
+# A command name the shell builds at run time.
+UNRESOLVABLE_NAME = re.compile(r"[$`]")
 
 
 def _commands(command: str) -> list[list[str]] | None:
@@ -229,24 +230,76 @@ def _rm_targets_outside(command: str, workspace: Path) -> str | None:
     for argv in commands:
         prog = Path(argv[0]).name
         if prog in ("cd", "pushd"):
-            dest = argv[1] if len(argv) > 1 else "~"
-            # `cd -` goes to $OLDPWD, which we can't see.
-            cwd = None if dest == "-" else _resolve(dest, cwd)
+            rest = argv[1:]
+            if rest and rest[0] == "--":
+                rest = rest[1:]
+            # `cd -` is $OLDPWD, and any other option (-P, -L, -e) makes the
+            # destination parsing ours, not the shell's: treat both as unknown.
+            if rest and rest[0].startswith("-"):
+                cwd = None
+            else:
+                cwd = _resolve(rest[0] if rest else "~", cwd)
             continue
+        if UNRESOLVABLE_NAME.search(argv[0]):
+            # `$(which rm) -rf /`, `$CMD x`: we can't know what runs.
+            return argv[0]
         # An rm anywhere in the words, not just first: `then rm ...`,
         # `find -exec rm ...`, `echo rm ...`. Over-holding beats a missed delete.
-        starts = [j for j, word in enumerate(argv) if Path(word).name == "rm"]
-        for j in starts:
+        for j, word in enumerate(argv):
+            if Path(word).name != "rm":
+                continue
+            if "xargs" in map(_name, argv[:j]):
+                # Targets arrive on stdin: nothing to resolve.
+                if _recursive(argv[j + 1 :]):
+                    return "<paths from xargs>"
+                continue
             hit = _rm_outside(argv[j + 1 :], cwd, workspace)
             if hit is not None:
                 return hit
+        if prog == "find" and ("-delete" in argv or "rm" in map(_name, argv)):
+            for root in _find_roots(argv[1:]) or ["."]:
+                resolved = _resolve(root, cwd)
+                if resolved is None or not (
+                    resolved == workspace or resolved.is_relative_to(workspace)
+                ):
+                    return root
     return None
 
 
-def _rm_outside(args: list[str], cwd: Path | None, workspace: Path) -> str | None:
+def _name(word: str) -> str:
+    return Path(word).name
+
+
+def _recursive(args: list[str]) -> bool:
     short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
-    if not ("r" in short.lower() or "--recursive" in args):
+    return "r" in short.lower() or "--recursive" in args
+
+
+def _find_roots(args: list[str]) -> list[str]:
+    """find's starting points: the words before its first expression token."""
+    roots = []
+    for arg in args:
+        if arg.startswith(("-", "(", "!")) or arg in ("-H", "-L", "-P"):
+            break
+        roots.append(arg)
+    return roots
+
+
+def _rm_outside(args: list[str], cwd: Path | None, workspace: Path) -> str | None:
+    if not _recursive(args):
         return None
+    targets = [a for a in args if not a.startswith("-")]
+    if not targets:
+        return "<paths from stdin>"  # `... | xargs rm -rf`: nothing to resolve
+    for arg in targets:
+        resolved = _resolve(arg, cwd)
+        if (
+            resolved is None
+            or resolved == workspace
+            or not resolved.is_relative_to(workspace)
+        ):
+            return arg
+    return None
     for arg in args:
         if arg.startswith("-"):
             continue
@@ -261,18 +314,23 @@ def _rm_outside(args: list[str], cwd: Path | None, workspace: Path) -> str | Non
 
 
 def current_branch(cwd: Path) -> str | None:
-    """The checked-out branch in cwd, or None if unknown (detached, not a repo)."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(cwd), "symbolic-ref", "--quiet", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return out.stdout.strip() or None
+    """The checked-out branch, read from .git/HEAD: no subprocess, so the
+    rules layer stays in microseconds. None if detached or not a repo."""
+    for directory in (cwd, *cwd.parents):
+        git = directory / ".git"
+        if git.is_file():  # worktree or submodule: "gitdir: <path>"
+            text = git.read_text(errors="replace").strip()
+            if not text.startswith("gitdir:"):
+                return None
+            git = (directory / text.split(":", 1)[1].strip()).resolve()
+        if git.is_dir():
+            try:
+                head = (git / "HEAD").read_text(errors="replace").strip()
+            except OSError:
+                return None
+            prefix = "ref: refs/heads/"
+            return head[len(prefix) :] if head.startswith(prefix) else None
+    return None
 
 
 PUSH_VALUE_FLAGS = frozenset(
@@ -305,6 +363,14 @@ def _push_rule(
             dest = branch_of(cwd)
             if dest is None:
                 return "ask", "push-implicit", "push destination can't be determined"
+        if "*" in dest:
+            pattern = re.escape(dest).replace(r"\*", ".*")
+            if any(re.fullmatch(pattern, b) for b in PROTECTED_BRANCHES):
+                return (
+                    "hold",
+                    "push-protected",
+                    f"wildcard refspec {spec!r} covers protected branches",
+                )
         if dest in PROTECTED_BRANCHES:
             return (
                 "hold",

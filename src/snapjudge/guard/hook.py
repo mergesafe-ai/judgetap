@@ -7,6 +7,7 @@ permission rules still apply -- the guard only ever tightens them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,7 @@ from typing import Any
 from snapjudge.guard.core import Action, Verdict, check, load_user_rules, project_rules
 from snapjudge.guard.rules import redact
 
+MAX_INCREMENT = 4 * 1024 * 1024
 GUARDED_TOOLS = ("Bash", "Write", "Edit", "MultiEdit")
 
 
@@ -131,7 +133,18 @@ def last_user_message(
         task, offset = cached["task"], cached["offset"]
         with open(transcript_path, "rb") as fh:
             fh.seek(offset)
-            new = fh.read()
+            new = fh.read(MAX_INCREMENT + 1)
+        if len(new) > MAX_INCREMENT:
+            # Far behind: rescanning backward from the end is cheaper.
+            offset = _complete_size(transcript_path)
+            task = next(
+                filter(
+                    None, map(_user_text, _lines_backward(transcript_path, end=offset))
+                ),
+                task,
+            )
+            _write_cache(cache, transcript_path, task, offset)
+            return task
         complete, _, _ = new.rpartition(
             b"\n"
         )  # leave a half-written line for next time
@@ -156,15 +169,27 @@ def _read_cache(cache: Path | None, transcript_path: str) -> dict | None:
     except (OSError, ValueError):
         return None
     size = Path(transcript_path).stat().st_size
-    # A different, replaced or truncated transcript invalidates the cache.
+    # A different, replaced or truncated transcript invalidates the cache;
+    # so does a rewrite in place, caught by fingerprinting the bytes read.
     inode = Path(transcript_path).stat().st_ino
     if (
         data.get("path") != transcript_path
         or data.get("inode") != inode
         or not 0 <= data.get("offset", -1) <= size
+        or data.get("fingerprint") != _fingerprint(transcript_path, data["offset"])
     ):
         return None
     return data
+
+
+def _fingerprint(path: str, offset: int) -> str:
+    """Hash of the first and last 4 KB before offset: cheap, and any rewrite
+    of the prefix we already read changes it in practice."""
+    with open(path, "rb") as fh:
+        head = fh.read(min(4096, offset))
+        fh.seek(max(0, offset - 4096))
+        tail = fh.read(min(4096, offset))
+    return hashlib.sha256(head + b"|" + tail).hexdigest()
 
 
 def _write_cache(
@@ -181,6 +206,7 @@ def _write_cache(
                 "path": transcript_path,
                 "inode": Path(transcript_path).stat().st_ino,
                 "offset": offset,
+                "fingerprint": _fingerprint(transcript_path, offset),
                 "task": task,
             }
             json.dump(record, fh)

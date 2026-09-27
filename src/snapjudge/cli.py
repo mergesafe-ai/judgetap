@@ -91,14 +91,17 @@ def _guard_stats(args) -> int:
         for line in fh:
             if not line.strip():
                 continue
-            r = json.loads(line)
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue  # a line cut off by a concurrent write
             total += 1
             outcomes[r["outcome"]] += 1
             layers[r["layer"]] += 1
             cost += r.get("cost_usd") or 0
             errors += bool(r.get("error"))
             if r["layer"] == "judge" and not r.get("error"):
-                latency_ms[round(r["latency_ms"])] += 1
+                latency_ms[min(round(r["latency_ms"]), 60_000)] += 1  # <= 60k buckets
     print(f"{total} guarded calls  ({path})")
     print("outcomes: " + ", ".join(f"{k} {v}" for k, v in outcomes.most_common()))
     print("layers:   " + ", ".join(f"{k} {v}" for k, v in layers.most_common()))
