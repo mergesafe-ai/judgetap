@@ -639,7 +639,18 @@ COMMAND_SECRETS = (
     re.compile(
         r"(?i)(?P<keep>(--)?(password|passwd|token|secret|api[-_]?key)[= ]\s*)[^\s'\"]+"
     ),
-    re.compile(r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)=)\S+"),
+    # Env assignments with the keyword anywhere in the name:
+    # AWS_SECRET_ACCESS_KEY=, GH_TOKEN_RW=, PGPASSWORD=, DB_PRIVATE_KEY=.
+    re.compile(
+        r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)"
+        r"[A-Z0-9_]*=)\S+"
+    ),
+    # mysql/mariadb take the password attached: -phunter2 (a bare -p prompts).
+    re.compile(
+        r"(?P<keep>\b(mysql|mariadb|mysqldump|mysqladmin)\b[^;&|\n]*?\s-p)[^\s'\"]+"
+    ),
+    # sshpass -p <password>.
+    re.compile(r"(?P<keep>\bsshpass\s+-p\s*)[^\s'\"]+"),
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
     # Basic auth on the command line: curl -u user:pass, --user=user:pass.
     # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
@@ -853,3 +864,18 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
 def _first_command_index(argv: list[str]) -> int:
     """Index of the command a wrapper chain finally runs."""
     return len(argv) - len(_unwrap(argv))
+
+
+# Files that configure the guard (or the agent's hooks). An agent editing
+# them could switch the guard off, so a person should see it first.
+GUARD_CONFIG = re.compile(
+    r"(^|/)(guard\.toml|\.claude/settings[^/]*\.json|\.cursor/hooks\.json"
+    r"|\.codex/hooks\.json|\.codex/config\.toml)$"
+)
+
+
+def check_path(path: str | None) -> tuple[Outcome, str, str] | None:
+    """Ask before a write to the guard's own configuration."""
+    if path and GUARD_CONFIG.search(path.replace("\\", "/")):
+        return "ask", "guard-config", f"edits the guard's own configuration ({path})"
+    return None
