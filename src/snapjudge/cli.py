@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import math
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -56,13 +57,8 @@ def _guard_install(args) -> int:
                 print(f"Engine: not saved ({err}).")
             else:
                 print(f"Engine: {spec} ({why}); saved to {saved}")
-                if spec.startswith("jev"):
-                    print(
-                        "  Jev reads TYPESAFE_API_KEY at hook time: make sure the agent's"
-                    )
-                    print(
-                        "  environment has it, or the guard falls back to rules only."
-                    )
+                if _uses_typesafe_key(spec):
+                    _offer_keychain()
         else:
             print(f"Engine: none ({why}).")
             print(
@@ -72,6 +68,18 @@ def _guard_install(args) -> int:
             print("  ~/.snapjudge/guard.toml.")
     print("Check with: snapjudge guard test")
     return 0
+
+
+def _uses_typesafe_key(spec: str) -> bool:
+    """Any engine that authenticates with TYPESAFE_API_KEY: hosted Jev, or a
+    TypeSafe-compatible endpoint that isn't on this machine."""
+    from snapjudge.engines import load
+
+    try:
+        engine = load(spec)
+    except Exception:  # noqa: BLE001 -- an unloadable spec was already rejected by write_engine
+        return False
+    return getattr(engine, "local", True) is False
 
 
 def _guard_uninstall(args) -> int:
@@ -187,12 +195,78 @@ def _dashboard(args) -> int:
     return 0
 
 
+def _offer_keychain(stdin=None) -> None:
+    """Offer to copy TYPESAFE_API_KEY into the keychain, interactively only."""
+    from snapjudge.secrets import key_source, set_key
+
+    stdin = stdin or sys.stdin
+    source = key_source("TYPESAFE_API_KEY")
+    if source == "keychain":
+        print("  Jev key: found in the keychain.")
+        return
+    if source != "env":
+        print("  Jev key: none found; run `snapjudge keys set TYPESAFE_API_KEY`.")
+        return
+    if not stdin.isatty():
+        print("  Jev key: only in this shell's env; hooks may not see it. Save it with")
+        print(
+            "  `snapjudge keys set TYPESAFE_API_KEY` (not saved: no terminal to ask)."
+        )
+        return
+    answer = input(
+        "  Save TYPESAFE_API_KEY to the OS keychain so hooks can read it? [Y/n] "
+    )
+    if answer.strip().lower() in ("", "y", "yes"):
+        try:
+            set_key("TYPESAFE_API_KEY", os.environ["TYPESAFE_API_KEY"])
+        except RuntimeError as err:
+            print(f"  Not saved: {err}")
+        else:
+            print("  Saved to the keychain.")
+
+
+def _keys_set(args) -> int:
+    import getpass
+
+    from snapjudge.secrets import set_key
+
+    value = getpass.getpass(f"{args.name}: ")  # never echoed, never in argv
+    if not value:
+        print("Nothing entered; not saved.")
+        return 1
+    try:
+        set_key(args.name, value)
+    except RuntimeError as err:
+        print(f"Not saved: {err}")
+        return 1
+    print(f"Saved {args.name} to the keychain.")
+    return 0
+
+
+def _keys_status(args) -> int:
+    from snapjudge.secrets import key_source
+
+    for name in args.names or ["TYPESAFE_API_KEY"]:
+        print(f"{name}: {key_source(name) or 'not set'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="snapjudge")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "eval", help="compare engines on labelled cases (snapjudge eval --help)"
     )
+    keys = sub.add_parser("keys", help="engine keys in the OS keychain")
+    ksub = keys.add_subparsers(dest="keys_command", required=True)
+    kset = ksub.add_parser("set", help="save a key (prompted, not echoed)")
+    kset.add_argument("name", help="e.g. TYPESAFE_API_KEY")
+    kset.set_defaults(func=_keys_set)
+    kstat = ksub.add_parser(
+        "status", help="where each key comes from (never its value)"
+    )
+    kstat.add_argument("names", nargs="*")
+    kstat.set_defaults(func=_keys_status)
     dash = sub.add_parser("dashboard", help="local page over the guard log")
     dash.add_argument("--port", type=int, default=8765)
     dash.add_argument("--no-browser", action="store_true", help="don't open a browser")
