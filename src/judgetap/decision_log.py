@@ -41,7 +41,8 @@ def record(decisions: Sequence[Decision]) -> None:
                     "source": "library",
                     "tool": "library",
                     "subject": redact(d.question.text)[:500],
-                    "outcome": d.value,
+                    # Answer labels are caller-defined text: redact them too.
+                    "outcome": redact(d.value)[:200],
                     "layer": "library",
                     "engine": d.engine,
                     "p": round(d.p, 4),

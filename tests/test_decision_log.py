@@ -167,3 +167,18 @@ def test_library_calls_stay_out_of_the_engine_table(tmp_path, monkeypatch):
     )
     summary = load(tmp_path)["summary"]
     assert summary["library"] == 1 and "lib-engine" not in summary["engines"]
+
+
+def test_library_outcome_is_redacted(tmp_path, monkeypatch):
+    import judgetap as jt
+    from judgetap.testing import StaticEngine
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setenv("JUDGETAP_LOG", "1")
+    secret = "sk_live_" + "a" * 24
+    jt.choice(
+        "which key?",
+        [secret, "none"],
+        engine=StaticEngine(lambda q, c: {secret: 0.9, "none": 0.1}),
+    )
+    assert secret not in (tmp_path / "guard.jsonl").read_text()
