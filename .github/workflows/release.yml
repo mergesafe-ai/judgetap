@@ -53,10 +53,13 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag || github.event.release.tag_name }}
       - uses: astral-sh/setup-uv@v6
       - name: Check the tag matches the package version
+        # The tag arrives through the environment, never interpolated into the
+        # script: a release tag is user-controlled text.
+        env:
+          TAG: ${{ needs.release-please.outputs.tag || github.event.release.tag_name }}
         run: |
-          tag="${{ needs.release-please.outputs.tag || github.event.release.tag_name }}"
           version=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "${tag#v}" = "$version" || { echo "tag $tag != version $version"; exit 1; }
+          test "${TAG#v}" = "$version" || { echo "tag does not match version $version"; exit 1; }
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
 
