@@ -366,3 +366,15 @@ def test_prune_leaves_a_temp_file_whose_session_is_locked(tmp_path):
     assert tmp.exists()
     prune_sessions(tmp_path, now=time.time() + 7200)  # next sweep, lock free
     assert not tmp.exists()
+
+
+def test_lock_path_matches_session_lock_for_dotted_ids(tmp_path):
+    import uuid
+
+    from judgetap.guard.loop import _lock_for
+
+    d = tmp_path
+    for data in ("a.b.json", "a.b.stop"):
+        assert _lock_for(d / data) == (d / data).with_suffix(".lock") == d / "a.b.lock"
+        tmp = (d / data).with_suffix(f".{uuid.uuid4().hex}.tmp")  # as _save writes it
+        assert _lock_for(tmp) == d / "a.b.lock"

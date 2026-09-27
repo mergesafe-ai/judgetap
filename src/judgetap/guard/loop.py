@@ -124,11 +124,24 @@ def prune_sessions(directory: Path, now: float | None = None) -> None:
         return
 
 
+TMP_NAME = re.compile(r"^(?P<stem>.+)\.[0-9a-f]{32}\.tmp$")
+
+
+def _lock_for(f: Path) -> Path:
+    """The lock _session_lock takes for this file. State files are
+    `<id>.json` / `<id>.stop` and lock `<id>.lock` (with_suffix, so a
+    session id may itself contain dots); their temp files are
+    `<id>.<uuid>.tmp` (with_suffix replaces .json/.stop), so the stem before
+    the uuid is the session id."""
+    m = TMP_NAME.match(f.name)
+    if m:
+        return f.with_name(m.group("stem") + ".lock")
+    return f.with_suffix(".lock")
+
+
 def _unlink_if_unlocked(f: Path) -> None:
     """Remove f only while holding its session lock (non-blocking)."""
-    # The session's lock (what _session_lock uses): `<id>.lock`, also for a
-    # temp file named `<id>.<uuid>.tmp` that a suspended hook may still own.
-    lock = f.with_name(f.name.split(".", 1)[0] + ".lock")
+    lock = _lock_for(f)
     fd = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
     try:
         try:
