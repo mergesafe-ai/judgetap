@@ -305,10 +305,39 @@ def test_prune_sessions_removes_old_state_once_an_hour(tmp_path):
     os.utime(fresh, (now - 60, now - 60))
     loop.prune_sessions(d, now=now)
     assert not old.exists() and fresh.exists()
-    stale = d / "c.lock"
-    stale.write_text("")
+    stale = d / "c.json"
+    stale.write_text("[]")
     os.utime(stale, (now - 9 * 86400, now - 9 * 86400))
     loop.prune_sessions(d, now=now + 60)  # within the hour: no sweep
     assert stale.exists()
     loop.prune_sessions(d, now=now + 3700)
     assert not stale.exists()
+
+
+def test_prune_keeps_locks_and_skips_busy_sessions(tmp_path):
+    import fcntl
+    import os
+    import time
+
+    from judgetap.guard.loop import SESSION_TTL_SECONDS, prune_sessions
+
+    old = time.time() - SESSION_TTL_SECONDS - 100
+    for name in (
+        "idle.json",
+        "idle.lock",
+        "busy.json",
+        "busy.lock",
+        "idle.stop",
+        "x.abc.tmp",
+    ):
+        p = tmp_path / name
+        p.write_text("{}")
+        os.utime(p, (old, old))
+    fd = os.open(tmp_path / "busy.lock", os.O_WRONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # another hook is working on "busy"
+    try:
+        prune_sessions(tmp_path)
+    finally:
+        os.close(fd)
+    left = sorted(p.name for p in tmp_path.iterdir() if p.name != ".pruned")
+    assert left == ["busy.json", "busy.lock", "idle.lock"]

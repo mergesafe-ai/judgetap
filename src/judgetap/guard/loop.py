@@ -96,9 +96,13 @@ PRUNE_EVERY_SECONDS = 3600
 
 
 def prune_sessions(directory: Path, now: float | None = None) -> None:
-    """Delete session state (json, lock, stop) untouched for SESSION_TTL_SECONDS.
-    Runs at most once per PRUNE_EVERY_SECONDS (a marker file's mtime) and never
-    raises: a missed sweep only costs disk space."""
+    """Delete session state (json, stop, tmp) untouched for SESSION_TTL_SECONDS.
+
+    Lock files are never deleted: unlinking a lock someone holds would let a
+    second hook lock a fresh inode and break mutual exclusion. They are empty,
+    so keeping them costs an inode, not space. A session's data is only
+    removed while holding its lock without waiting; a busy session is skipped.
+    Runs at most once per PRUNE_EVERY_SECONDS and never raises."""
     try:
         now = time.time() if now is None else now
         marker = directory / ".pruned"
@@ -108,20 +112,37 @@ def prune_sessions(directory: Path, now: float | None = None) -> None:
         marker.touch()
         os.utime(marker, (now, now))
         for f in directory.iterdir():
-            if f.name == ".pruned" or f.suffix not in (
-                ".json",
-                ".lock",
-                ".stop",
-                ".tmp",
-            ):
+            if f.name == ".pruned" or f.suffix not in (".json", ".stop", ".tmp"):
                 continue
             try:
-                if now - f.stat().st_mtime > SESSION_TTL_SECONDS:
-                    f.unlink()
+                if now - f.stat().st_mtime <= SESSION_TTL_SECONDS:
+                    continue
+                if f.suffix == ".tmp":
+                    f.unlink(missing_ok=True)  # a week-old temp file is an orphan
+                else:
+                    _unlink_if_unlocked(f)
             except OSError:
                 continue
     except OSError:
         return
+
+
+def _unlink_if_unlocked(f: Path) -> None:
+    """Remove f only while holding its session lock (non-blocking)."""
+    lock = f.with_suffix(".lock")  # the same path _session_lock uses for json and stop
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            pass  # no flock (Windows): best effort, as for the hooks themselves
+        except OSError:
+            return  # a hook holds it: this session is in use, keep its data
+        f.unlink(missing_ok=True)
+    finally:
+        os.close(fd)
 
 
 def _state_path(session: str | None) -> Path | None:
