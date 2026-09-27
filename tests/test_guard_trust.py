@@ -309,3 +309,12 @@ def test_redirects_to_symlinked_config_ask(command, tmp_path):
     for name in ("alias.cfg", "alias"):
         (tmp_path / name).symlink_to(tmp_path / "guard.toml")
     assert check_command_writes(command, tmp_path) is not None
+
+
+def test_symlink_with_equals_in_its_name_asks(tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    (tmp_path / "guard.toml").write_text("")
+    (tmp_path / "alias=cfg").symlink_to(tmp_path / "guard.toml")
+    assert check_command_writes("echo x >alias=cfg", tmp_path) is not None
+    assert check_command_writes("dd if=x of=alias=cfg", tmp_path) is not None

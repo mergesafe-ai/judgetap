@@ -948,7 +948,10 @@ def check_command_writes(
     # `>|y`) and `--opt=` prefixes dropped, is resolved: a symlink with any
     # name can point at the config.
     for word in _words(command):
-        target = REDIRECT_PREFIX.sub("", word).split("=", 1)[-1]
-        if target and _is_guard_config(target, cwd):
-            return "ask", "guard-config", "touches the guard's own configuration"
+        word = REDIRECT_PREFIX.sub("", word)
+        # Both the whole word (a file may be named `a=b`) and the value of an
+        # `--opt=value` / `of=value` word.
+        for target in {word, word.split("=", 1)[-1]}:
+            if target and _is_guard_config(target, cwd):
+                return "ask", "guard-config", "touches the guard's own configuration"
     return None
