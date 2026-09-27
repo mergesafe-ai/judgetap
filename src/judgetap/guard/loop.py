@@ -45,11 +45,14 @@ def normalize(payload: dict[str, Any]) -> str | None:
     return f"{tool}:{target}" if target else None
 
 
+EXIT_PREFIX = re.compile(r"^\s*exit code[: ]\s*(-?\d+)", re.IGNORECASE)
+
+
 def failure(payload: dict[str, Any]) -> str | None:
     """A short hash of the error, or None when the call succeeded."""
     resp = payload.get("tool_response")
     error = payload.get("error")
-    text, failed = "", bool(error)
+    text, failed, code = "", bool(error), None
     if isinstance(resp, dict):
         code = resp.get("exit_code", resp.get("exitCode", resp.get("returncode")))
         if isinstance(code, int) and code != 0:
@@ -57,14 +60,22 @@ def failure(payload: dict[str, Any]) -> str | None:
         if resp.get("is_error") or resp.get("isError") or resp.get("interrupted"):
             failed = True
         text = str(resp.get("stderr") or resp.get("error") or "")
-    elif isinstance(resp, str) and resp.lower().startswith(("error", "fatal")):
-        failed, text = True, resp
+    elif isinstance(resp, str):
+        # Claude Code renders a failed Bash call as "Exit code N\n<output>".
+        m = EXIT_PREFIX.match(resp)
+        if m and m.group(1) != "0":
+            failed, text, code = True, resp, int(m.group(1))
+        elif resp.lower().startswith(("error", "fatal")):
+            failed, text = True, resp
     if error:
         text = str(error)
     if not failed:
         return None
     # Numbers vary between retries (pids, timings, line numbers): ignore them.
     stable = re.sub(r"\d+", "#", text.strip())[:2000]
+    if not stable:
+        # No diagnostic text: distinguish failures by their exit status.
+        stable = f"exit:{code}"
     return hashlib.sha256(stable.encode()).hexdigest()[:12]
 
 
@@ -99,7 +110,7 @@ def detect(actions: list[dict[str, Any]]) -> int:
         return 0
     last, count = actions[-1], 0
     for a in reversed(actions[-WINDOW:]):
-        if a["act"] != last["act"]:
+        if a.get("key", a["act"]) != last.get("key", last["act"]):
             continue  # other actions in between don't break a loop
         if a.get("err") != last["err"]:
             break
@@ -139,7 +150,15 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     # Only a hash and the (redacted) action are stored: never file contents.
     actions = _load(path)
-    actions.append({"act": redact(act)[:500], "err": failure(payload)})
+    # Identity is a hash of the full action (so long commands that differ
+    # late don't collide); the redacted, truncated text is only for display.
+    actions.append(
+        {
+            "key": hashlib.sha256(act.encode()).hexdigest()[:16],
+            "act": redact(act)[:500],
+            "err": failure(payload),
+        }
+    )
     _save(path, actions)
     count = detect(actions)
     if not count:

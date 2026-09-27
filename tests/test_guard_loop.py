@@ -132,3 +132,68 @@ def test_other_agents_get_no_post_hook(tmp_path):
     path = tmp_path / "hooks.json"
     install(path, "codex")
     assert "PostToolUse" not in json.loads(path.read_text())["hooks"]
+
+
+def test_exit_code_prefixed_string_is_a_failure():
+    from judgetap.guard.loop import failure
+
+    assert (
+        failure({"tool_response": "Exit code 1\nnpm ERR! missing script: build"})
+        is not None
+    )
+    assert failure({"tool_response": "Exit code 0\nok"}) is None
+
+
+def test_empty_diagnostics_differ_by_exit_code():
+    from judgetap.guard.loop import failure
+
+    a = failure({"tool_response": {"exit_code": 1, "stderr": ""}})
+    b = failure({"tool_response": {"exit_code": 2, "stderr": ""}})
+    assert a and b and a != b
+
+
+def test_long_commands_differing_late_do_not_collide(tmp_path, monkeypatch):
+    from judgetap.guard import loop
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    base = "x" * 600
+    for i in range(3):
+        out = loop.handle(
+            {
+                "session_id": "s1",
+                "tool_name": "Bash",
+                "tool_input": {"command": base + str(i) * 3},
+                "tool_response": {"exit_code": 1, "stderr": "boom"},
+            }
+        )
+    assert out is None
+
+
+def test_loop_notes_are_not_guarded_calls(tmp_path, monkeypatch, capsys):
+    import json
+
+    from judgetap.cli import main
+    from judgetap.dashboard.data import load
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    rows = [
+        {
+            "outcome": "hold",
+            "layer": "rules",
+            "latency_ms": 1,
+            "cost_usd": None,
+            "error": None,
+        },
+        {
+            "outcome": "note",
+            "layer": "loop",
+            "latency_ms": 0,
+            "cost_usd": None,
+            "error": None,
+        },
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    main(["guard", "stats"])
+    assert "1 guarded calls" in capsys.readouterr().out
+    s = load(tmp_path)["summary"]
+    assert s["total"] == 1 and s["loop_notes"] == 1
