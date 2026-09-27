@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -292,7 +293,7 @@ def run(
         if action is None:
             out = {"permission": "allow"} if agent == "cursor" else None
         else:
-            verdict = _decide(action, start)
+            verdict = _decide(action, start, payload.get("session_id"))
             if record:
                 try:
                     log(action, verdict, payload.get("session_id"))
@@ -313,7 +314,27 @@ def run(
     return code
 
 
-def _decide(action: Action, start: float) -> Verdict:
+def _warn_once(session: str | None, key: str) -> bool:
+    """True the first time `key` is warned about in this session."""
+    if not isinstance(session, str) or not re.fullmatch(
+        r"[A-Za-z0-9._-]{1,128}", session
+    ):
+        return True  # no usable session id: warn rather than stay silent
+    marker = home() / "sessions" / f"{session}.warned"
+    try:
+        seen = set(marker.read_text().splitlines()) if marker.exists() else set()
+        if key in seen:
+            return False
+        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(marker, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as fh:
+            fh.write(key + "\n")
+    except OSError:
+        return True
+    return True
+
+
+def _decide(action: Action, start: float, session: str | None = None) -> Verdict:
     if getattr(action, "unreadable", False):
         # A Bash call whose command can't be read: fail closed.
         return Verdict(
@@ -335,7 +356,11 @@ def _decide(action: Action, start: float) -> Verdict:
     ):
         try:
             rules += load_user_rules(path, trusted=trusted)
-            if not trusted and (n := dropped_allows(path)):
+            if (
+                not trusted
+                and (n := dropped_allows(path))
+                and _warn_once(session, f"repo-allow:{path}")
+            ):
                 config_error = f"ignored {n} allow rule(s) in {path}: a repo can only tighten the guard"
         except Exception as err:  # noqa: BLE001 -- a bad config must not disable built-ins
             config_error = f"ignored {path}: {err}"

@@ -642,15 +642,16 @@ COMMAND_SECRETS = (
     # Env assignments with the keyword anywhere in the name:
     # AWS_SECRET_ACCESS_KEY=, GH_TOKEN_RW=, PGPASSWORD=, DB_PRIVATE_KEY=.
     re.compile(
-        r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)"
+        r"(?i)(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)"
         r"[A-Z0-9_]*=)\S+"
     ),
     # mysql/mariadb take the password attached: -phunter2 (a bare -p prompts).
     re.compile(
-        r"(?P<keep>\b(mysql|mariadb|mysqldump|mysqladmin)\b[^;&|\n]*?\s-p)[^\s'\"]+"
+        r"(?P<keep>\b(mysql|mariadb|mysqldump|mysqladmin)\b[^;&|\n]*?\s-p)"
+        r"(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)"
     ),
     # sshpass -p <password>.
-    re.compile(r"(?P<keep>\bsshpass\s+-p\s*)[^\s'\"]+"),
+    re.compile(r"(?P<keep>\bsshpass\s+-p\s*)(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)"),
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
     # Basic auth on the command line: curl -u user:pass, --user=user:pass.
     # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
@@ -874,8 +875,59 @@ GUARD_CONFIG = re.compile(
 )
 
 
-def check_path(path: str | None) -> tuple[Outcome, str, str] | None:
+def _is_guard_config(path: str, cwd: Path | None) -> bool:
+    """The literal path, and where it really points (symlinks followed,
+    relative paths taken from cwd), both checked."""
+    candidates = [path.replace("\\", "/")]
+    try:
+        p = Path(path).expanduser()
+        if cwd is not None and not p.is_absolute():
+            p = cwd / p
+        candidates.append(p.resolve(strict=False).as_posix())
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return any(GUARD_CONFIG.search(c) for c in candidates)
+
+
+def check_path(
+    path: str | None, cwd: Path | None = None
+) -> tuple[Outcome, str, str] | None:
     """Ask before a write to the guard's own configuration."""
-    if path and GUARD_CONFIG.search(path.replace("\\", "/")):
+    if path and _is_guard_config(path, cwd):
         return "ask", "guard-config", f"edits the guard's own configuration ({path})"
+    return None
+
+
+# Shell writes to a file: redirections (> and >>) plus the common writer
+# commands. Other ways to write a file are left to the judge.
+REDIRECT_TARGET = re.compile(r"(?:^|[^<>&0-9])>{1,2}\|?\s*(['\"]?)([^\s;&|'\"]+)\1")
+
+
+def _write_targets(command: str) -> list[str]:
+    targets = [m.group(2) for m in REDIRECT_TARGET.finditer(command)]
+    for argv in _commands(command) or []:
+        prog, args = Path(argv[0]).name, argv[1:]
+        operands = [a for a in args if not a.startswith("-")]
+        if prog == "tee":
+            targets += operands
+        elif prog in ("cp", "mv", "install", "ln") and operands:
+            targets.append(operands[-1])
+        elif prog == "sed" and any(
+            a == "-i" or a.startswith(("-i", "--in-place")) for a in args
+        ):
+            targets += operands[1:]  # the first operand is the script
+    return targets
+
+
+def check_command_writes(
+    command: str, cwd: Path | None = None
+) -> tuple[Outcome, str, str] | None:
+    """Ask when a shell command writes to the guard's own configuration."""
+    for target in _write_targets(command):
+        if _is_guard_config(target, cwd):
+            return (
+                "ask",
+                "guard-config",
+                f"writes the guard's own configuration ({target})",
+            )
     return None

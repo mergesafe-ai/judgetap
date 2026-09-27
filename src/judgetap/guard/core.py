@@ -13,6 +13,7 @@ from judgetap.engine import Engine
 from judgetap.guard.rules import (
     Outcome,
     check_command,
+    check_command_writes,
     check_content,
     check_path,
     rules_only_check,
@@ -136,9 +137,11 @@ def check(
             )
     hit = None
     if action.command is not None:
-        hit = check_command(action.command, action.cwd)
+        hit = check_command(action.command, action.cwd) or check_command_writes(
+            action.command, action.cwd
+        )
     else:
-        hit = check_content(action.content or "") or check_path(action.path)
+        hit = check_content(action.content or "") or check_path(action.path, action.cwd)
     if hit:
         outcome, name, reason = hit
         return Verdict(outcome, "rules", reason, rule=name)

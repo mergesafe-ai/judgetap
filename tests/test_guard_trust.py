@@ -169,3 +169,79 @@ def test_common_secrets_are_redacted(command, leak):
 )
 def test_harmless_dash_p_is_kept(command):
     assert redact(command) == command
+
+
+def test_symlinked_path_to_guard_config_asks(tmp_path):
+    from judgetap.guard.rules import check_path
+
+    (tmp_path / "guard.toml").write_text("")
+    (tmp_path / "guard-alias").symlink_to(tmp_path / "guard.toml")
+    assert check_path("guard-alias", tmp_path)[1] == "guard-config"
+    assert check_path(str(tmp_path / "guard-alias"))[1] == "guard-config"
+    assert check_path("notes.md", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ("db_private_key=zzz ./run", "zzz"),
+        ("aws_secret_access_key=abc123 aws s3 ls", "abc123"),
+        ("sshpass -p 'hunter2' ssh host", "hunter2"),
+        ('sshpass -p "pa ss" ssh host', "pa ss"),
+        ("mysql -u root -p'hunter2' db", "hunter2"),
+        ('mysql -u root -p"pw 1" db', "pw 1"),
+    ],
+)
+def test_round2_redaction(command, leak):
+    from judgetap.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf x > .claude/settings.json",
+        "echo '{}' >> guard.toml",
+        "cat new | tee .cursor/hooks.json",
+        "cp evil.toml guard.toml",
+        "mv x .codex/hooks.json",
+        "sed -i 's/ask/allow/' guard.toml",
+    ],
+)
+def test_bash_writes_to_guard_config_ask(tmp_path, command):
+    from judgetap.guard.core import Action, check
+
+    v = check(Action(tool="Bash", cwd=tmp_path, command=command), None)
+    assert (v.outcome, v.rule) == ("ask", "guard-config")
+
+
+def test_ordinary_redirects_are_untouched(tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    assert check_command_writes("echo hi > out.txt; cp a b", tmp_path) is None
+
+
+def test_repo_allow_warning_once_per_session(tmp_path, monkeypatch):
+    import io
+    import json
+
+    from judgetap.guard import hook
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
+    (tmp_path / "guard.toml").write_text('[[rule]]\npattern = "x"\noutcome = "allow"\n')
+
+    def run():
+        out = io.StringIO()
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "make test"},
+            "cwd": str(tmp_path),
+            "session_id": "s1",
+        }
+        hook.run(io.StringIO(json.dumps(payload)), out)
+        return json.loads(out.getvalue()) if out.getvalue() else {}
+
+    assert "ignored" in run().get("systemMessage", "")
+    assert "systemMessage" not in run()
