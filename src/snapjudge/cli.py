@@ -57,7 +57,7 @@ def _guard_install(args) -> int:
                 print(f"Engine: not saved ({err}).")
             else:
                 print(f"Engine: {spec} ({why}); saved to {saved}")
-                if spec.startswith("jev"):
+                if _uses_typesafe_key(spec):
                     _offer_keychain()
         else:
             print(f"Engine: none ({why}).")
@@ -68,6 +68,18 @@ def _guard_install(args) -> int:
             print("  ~/.snapjudge/guard.toml.")
     print("Check with: snapjudge guard test")
     return 0
+
+
+def _uses_typesafe_key(spec: str) -> bool:
+    """Any engine that authenticates with TYPESAFE_API_KEY: hosted Jev, or a
+    TypeSafe-compatible endpoint that isn't on this machine."""
+    from snapjudge.engines import load
+
+    try:
+        engine = load(spec)
+    except Exception:  # noqa: BLE001 -- an unloadable spec was already rejected by write_engine
+        return False
+    return getattr(engine, "local", True) is False
 
 
 def _guard_uninstall(args) -> int:

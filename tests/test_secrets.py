@@ -142,3 +142,19 @@ def test_hook_reads_the_keychain_once(kr, monkeypatch, tmp_path):
     kr.get_password = lambda service, name: reads.append(name) or real(service, name)
     assert hook._engine() is not None
     assert reads == ["TYPESAFE_API_KEY"]
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("jev", True),
+        ("typesafe:https://gw.example", True),
+        ("jev@http://127.0.0.1:8000", False),
+        ("agentjev", False),
+    ],
+)
+def test_keychain_offer_covers_remote_typesafe(kr, monkeypatch, spec, expected):
+    from snapjudge.cli import _uses_typesafe_key
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")  # the install-time case: key present
+    assert _uses_typesafe_key(spec) is expected
