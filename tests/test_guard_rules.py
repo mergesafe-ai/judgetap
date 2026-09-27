@@ -608,3 +608,20 @@ def test_only_http_client_segments_are_scanned():
 
     out = redact("curl -u bob:pw https://x; sort -u file:x")
     assert "pw" not in out and out.endswith("sort -u file:x")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl -u 'bob:pa|ss' https://x",
+        'curl -u "bob:a;b&c" https://x',
+        "curl -u 'bob:x\ny' https://x",
+    ],
+)
+def test_separators_inside_quoted_credentials(command):
+    from snapjudge.guard.rules import redact
+
+    out = redact(command)
+    assert "bob" not in out and "ss" not in out.split("https")[0].replace(
+        "[REDACTED]", ""
+    )

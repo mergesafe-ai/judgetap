@@ -678,8 +678,32 @@ def _redact_basic_auth(text: str) -> str:
     """Mask the whole argument of -u/--user, but only in HTTP clients:
     `sort -u file:x` keeps its argument."""
     # Scan segment by segment: `curl ...; sort -u file:x` leaves sort alone.
-    parts = re.split(r"(;|&&|\|\||\||\n)", text)
-    return "".join(_redact_segment(p) if AUTH_PROGRAMS.search(p) else p for p in parts)
+    return "".join(
+        _redact_segment(p) if AUTH_PROGRAMS.search(p) else p for p in _segments(text)
+    )
+
+
+def _segments(text: str) -> list[str]:
+    """Split at ; & | and newlines outside quotes, keeping the separators,
+    so a quoted `bob:pa|ss` stays one piece."""
+    parts, start, i, quote = [], 0, 0, None
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c in ";&|\n":
+            parts.append(text[start:i])
+            parts.append(c)
+            start = i + 1
+        i += 1
+    parts.append(text[start:])
+    return parts
 
 
 def _redact_segment(text: str) -> str:
