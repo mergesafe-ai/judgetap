@@ -925,6 +925,18 @@ GUARD_CONFIG_MENTION = re.compile(
 )
 
 
+REDIRECT_PREFIX = re.compile(r"^(?:\d*|&)(?:>>?|<>?)\|?")
+
+
+def _words(command: str) -> list[str]:
+    """Every shell word, with redirections split off even when attached."""
+    spaced = re.sub(r"(\d*|&)(>>?|<>?)\|?", lambda m: " " + m.group(0) + " ", command)
+    words: list[str] = []
+    for argv in _commands(spaced, unwrap=False) or []:
+        words += argv
+    return words
+
+
 def check_command_writes(
     command: str, cwd: Path | None = None
 ) -> tuple[Outcome, str, str] | None:
@@ -932,13 +944,11 @@ def check_command_writes(
     a word in it resolves (symlinks followed) to one."""
     if GUARD_CONFIG_MENTION.search(command.replace("\\", "/")):
         return "ask", "guard-config", "touches the guard's own configuration"
-    for argv in _commands(command, unwrap=False) or []:
-        for word in argv:
-            candidate = word.split("=", 1)[-1]
-            if ("/" in word or "." in word) and _is_guard_config(candidate, cwd):
-                return (
-                    "ask",
-                    "guard-config",
-                    "touches the guard's own configuration",
-                )
+    # Every word, with redirection operators peeled off (`2>alias`, `&>>x`,
+    # `>|y`) and `--opt=` prefixes dropped, is resolved: a symlink with any
+    # name can point at the config.
+    for word in _words(command):
+        target = REDIRECT_PREFIX.sub("", word).split("=", 1)[-1]
+        if target and _is_guard_config(target, cwd):
+            return "ask", "guard-config", "touches the guard's own configuration"
     return None

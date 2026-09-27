@@ -290,3 +290,22 @@ def test_quoted_env_values_fully_redacted(command, leak):
     from judgetap.guard.rules import redact
 
     assert leak not in redact(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x 2>alias.cfg",
+        "echo x 2>alias",
+        "echo x &>>alias",
+        "echo x >|alias",
+        "cat < alias",
+    ],
+)
+def test_redirects_to_symlinked_config_ask(command, tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    (tmp_path / "guard.toml").write_text("")
+    for name in ("alias.cfg", "alias"):
+        (tmp_path / name).symlink_to(tmp_path / "guard.toml")
+    assert check_command_writes(command, tmp_path) is not None
