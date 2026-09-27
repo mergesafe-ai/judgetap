@@ -122,7 +122,8 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "outcomes": dict(outcomes),
         "holds_per_1000": round(1000 * outcomes["hold"] / total, 1) if total else None,
         "false_alarms": false_holds,
-        "cost_usd": round(cost, 6),
+        # Individually finite costs can still sum past float range.
+        "cost_usd": round(cost, 6) if math.isfinite(cost) else None,
         "engines": {
             name: {
                 "calls": calls[name],
@@ -159,7 +160,11 @@ def _finite(value: Any) -> float | None:
     """A finite int/float as float; anything else (str, bool, NaN, inf) is None."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        number = float(value)  # huge JSON ints overflow here: an invalid field
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _scrub(value: Any) -> Any:
@@ -223,7 +228,9 @@ def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
         return
     if r.get("layer") == "judge":
         calls[r["engine"]] += 1
-        by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+        latency = _finite(r.get("latency_ms"))
+        if latency is not None:  # no sample for a missing or invalid latency
+            by_engine[r["engine"]].append(latency)
     elif r.get("layer") == "stop" and r.get("outcome") in ("allow", "block"):
         # A Stop check from before calls were logged: it asked its engine
         # once, but recorded no latency, so only the call is counted.

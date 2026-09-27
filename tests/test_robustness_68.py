@@ -95,3 +95,52 @@ def test_empty_new_env_wins_over_old(monkeypatch):
 def test_nan_in_unknown_fields_is_scrubbed(tmp_path):
     write(tmp_path, ['{"outcome":"allow","extra":{"x":[NaN, -Infinity]}}'])
     json.dumps(load(tmp_path), allow_nan=False)
+
+
+def test_huge_int_cost_keeps_the_record(tmp_path):
+    import json
+
+    from judgetap.dashboard.data import load
+
+    (tmp_path / "guard.jsonl").write_text(
+        json.dumps({"outcome": "hold", "cost_usd": 10**400}) + "\n"
+    )
+    s = load(tmp_path)["summary"]
+    assert s["total"] == 1 and s["outcomes"] == {"hold": 1}
+
+
+def test_invalid_legacy_latency_adds_no_sample(tmp_path):
+    from judgetap.dashboard.data import load
+
+    (tmp_path / "guard.jsonl").write_text(
+        '{"outcome":"allow","layer":"judge","engine":"e","latency_ms":NaN}\n'
+    )
+    e = load(tmp_path)["summary"]["engines"]["e"]
+    assert e["calls"] == 1 and e["p50_ms"] is None
+
+
+def test_overflowing_cost_total_still_serves(tmp_path):
+    import json
+    import socket
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from judgetap.dashboard.server import make_handler
+
+    (tmp_path / "guard.jsonl").write_text(
+        "\n".join(json.dumps({"outcome": "allow", "cost_usd": 1e308}) for _ in range(2))
+        + "\n"
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(tmp_path, "tok", port))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/data") as res:
+            assert res.status == 200
+            assert json.loads(res.read())["summary"]["cost_usd"] is None
+    finally:
+        srv.shutdown()
+        srv.server_close()
