@@ -8,7 +8,7 @@ import time
 from collections.abc import Sequence
 
 from judgetap import decision_log
-from judgetap.engine import Context, Engine, RawAnswer
+from judgetap.engine import Call, Context, Engine, RawAnswer
 from judgetap.errors import InvalidAnswerError, NoEngineError
 from judgetap.types import Decision, Question
 
@@ -78,6 +78,24 @@ def validate_answer(
     return {o: dist[o] / total for o in question.options}
 
 
+def _calls(answers: Sequence[RawAnswer], engine: Engine, latency_ms: float, n: int):
+    """The engine calls behind a batch: what a composite engine reported, or
+    the one call the core just timed."""
+    for raw in answers:
+        if getattr(raw, "calls", ()):
+            return tuple(raw.calls)
+    return (Call(engine.name, latency_ms, True, n),)
+
+
+def _tag_failure(err: Exception, engine: Engine, latency_ms: float, n: int) -> None:
+    """Attach the failed call to the exception unless an inner engine did."""
+    if not getattr(err, "calls", None):
+        try:
+            err.calls = (Call(engine.name, latency_ms, False, n),)
+        except AttributeError:
+            pass  # exceptions without a __dict__: no call record
+
+
 def _decisions(
     questions: Sequence[Question],
     answers: Sequence[RawAnswer],
@@ -89,6 +107,7 @@ def _decisions(
             f"{engine.name} returned {len(answers)} answers "
             f"for {len(questions)} questions"
         )
+    calls = _calls(answers, engine, latency_ms, len(questions))
     out = []
     for question, raw in zip(questions, answers, strict=True):
         dist = validate_answer(question, raw, engine.name)
@@ -105,6 +124,7 @@ def _decisions(
                 escalated=len(raw.hops) > 1,
                 calibrated=raw.calibrated,
                 meta={"hops": list(raw.hops)} if raw.hops else {},
+                calls=calls,
             )
         )
     return out
@@ -125,7 +145,11 @@ def batch(
         return []
     chosen = _resolve(engine)
     start = time.perf_counter()
-    answers = chosen.decide(questions, context)
+    try:
+        answers = chosen.decide(questions, context)
+    except Exception as err:
+        _tag_failure(err, chosen, (time.perf_counter() - start) * 1000, len(questions))
+        raise
     latency_ms = (time.perf_counter() - start) * 1000
     return _finish(_decisions(questions, answers, chosen, latency_ms), log)
 
@@ -141,7 +165,11 @@ async def abatch(
         return []
     chosen = _resolve(engine)
     start = time.perf_counter()
-    answers = await chosen.adecide(questions, context)
+    try:
+        answers = await chosen.adecide(questions, context)
+    except Exception as err:
+        _tag_failure(err, chosen, (time.perf_counter() - start) * 1000, len(questions))
+        raise
     latency_ms = (time.perf_counter() - start) * 1000
     return await _afinish(_decisions(questions, answers, chosen, latency_ms), log)
 

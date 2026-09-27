@@ -91,6 +91,7 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         r["false_alarm"] = r["id"] in false_alarms
         cost += r.get("cost_usd") or 0
         recent.append(r)
+        _count_calls(r, calls, by_engine)
         if r.get("layer") == "stop":
             stops += 1  # a task-done check, not a guarded call
             continue
@@ -106,9 +107,6 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         outcomes[r.get("outcome")] += 1
         if r.get("outcome") == "hold" and r["false_alarm"]:
             false_holds += 1
-        if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
-            by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
-            calls[r["engine"]] += 1
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
             per_day[day][r.get("outcome")] += 1
@@ -132,6 +130,31 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "per_day": {d: dict(c) for d, c in per_day.items()},
     }
     return {"summary": summary, "recent": list(recent)[::-1]}
+
+
+def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
+    """Engine metrics come from the calls each record reports, each with its
+    own latency: nothing is inferred. A batch writes its calls on one record
+    only. Records from before calls were logged fall back: a successful guard
+    judgement counts one call (with its latency) of its answering engine, and
+    a Stop check that asked its engine counts one call (no latency recorded)."""
+    reported = r.get("calls")
+    if isinstance(reported, list):
+        for c in reported:
+            if isinstance(c, dict) and isinstance(c.get("engine"), str):
+                calls[c["engine"]] += 1
+                if isinstance(c.get("latency_ms"), int | float):
+                    by_engine[c["engine"]].append(float(c["latency_ms"]))
+        return
+    if not r.get("engine") or r.get("error"):
+        return
+    if r.get("layer") == "judge":
+        calls[r["engine"]] += 1
+        by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+    elif r.get("layer") == "stop" and r.get("outcome") in ("allow", "block"):
+        # A Stop check from before calls were logged: it asked its engine
+        # once, but recorded no latency, so only the call is counted.
+        calls[r["engine"]] += 1
 
 
 def _rank(values: Iterable[float], q: float) -> float | None:

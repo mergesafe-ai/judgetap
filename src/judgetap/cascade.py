@@ -9,6 +9,7 @@ answering, and the question moves on to the next engine.
 from __future__ import annotations
 
 import asyncio
+import time
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from judgetap.api import validate_answer
-from judgetap.engine import Context, Engine, RawAnswer
+from judgetap.engine import Call, Context, Engine, RawAnswer
 from judgetap.errors import JudgetapError
 from judgetap.types import Question
 
@@ -25,7 +26,13 @@ OLD_CONFIG_FILE = "snapjudge.toml"
 
 
 class CascadeExhaustedError(JudgetapError):
-    """No engine answered a question with enough confidence."""
+    """No engine answered a question with enough confidence.
+
+    `calls` lists the engine calls the cascade made before giving up."""
+
+    def __init__(self, message: str, calls: tuple[Call, ...] = ()) -> None:
+        super().__init__(message)
+        self.calls = calls
 
 
 @dataclass
@@ -57,33 +64,60 @@ class Cascade:
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         attempts: list[list[Attempt]] = [[] for _ in questions]
+        calls: list[Call] = []
         for engine in self.engines:
             pending = self._pending(questions, attempts)
             if not pending:
                 break
+            start = time.perf_counter()
             try:
                 answers = engine.decide([questions[i] for i in pending], context)
             except Exception as err:  # noqa: BLE001 -- any engine failure falls through
                 answers = err
+            calls.extend(
+                _calls_of(engine, answers, start, [questions[i] for i in pending])
+            )
             self._record(engine, questions, pending, answers, attempts)
-        return [self._finish(q, a) for q, a in zip(questions, attempts, strict=True)]
+        return self._results(questions, attempts, tuple(calls))
 
     async def adecide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         attempts: list[list[Attempt]] = [[] for _ in questions]
+        calls: list[Call] = []
         for engine in self.engines:
             pending = self._pending(questions, attempts)
             if not pending:
                 break
+            start = time.perf_counter()
             try:
                 answers = await engine.adecide([questions[i] for i in pending], context)
             except asyncio.CancelledError:
                 raise
             except Exception as err:  # noqa: BLE001 -- any engine failure falls through
                 answers = err
+            calls.extend(
+                _calls_of(engine, answers, start, [questions[i] for i in pending])
+            )
             self._record(engine, questions, pending, answers, attempts)
-        return [self._finish(q, a) for q, a in zip(questions, attempts, strict=True)]
+        return self._results(questions, attempts, tuple(calls))
+
+    def _results(self, questions, attempts, calls: tuple[Call, ...]) -> list[RawAnswer]:
+        """Finish every question; every answer (or the exhaustion error)
+        carries the calls this batch made."""
+        results = []
+        for q, a in zip(questions, attempts, strict=True):
+            try:
+                results.append(self._finish(q, a))
+            except Exception as err:
+                # Exhaustion, or an on_exhausted callback that raised: either
+                # way the providers' calls travel with the error.
+                try:
+                    err.calls = calls
+                except AttributeError:
+                    pass  # an exception type that refuses attributes
+                raise
+        return [replace(r, calls=calls) for r in results]
 
     def _pending(self, questions, attempts) -> list[int]:
         return [i for i in range(len(questions)) if not self._confident(attempts[i])]
@@ -136,6 +170,33 @@ class Cascade:
         raise CascadeExhaustedError(
             f"no engine reached p>={self.escalate_below} for {question.text!r} ({errors})"
         )
+
+
+def _calls_of(
+    engine: Engine, answers, start: float, asked: list[Question]
+) -> tuple[Call, ...]:
+    """The calls one hop made: a nested composite's own calls when it reports
+    them (answers or its exhaustion error), else the one call timed here."""
+    inner = getattr(answers, "calls", None) if isinstance(answers, Exception) else None
+    if inner is None and not isinstance(answers, Exception):
+        try:
+            inner = next((a.calls for a in answers if getattr(a, "calls", ())), None)
+        except TypeError:
+            inner = None  # a malformed, non-iterable result: timed below
+    if inner:
+        return tuple(inner)
+    n = len(asked)
+    elapsed = (time.perf_counter() - start) * 1000
+    # ok means usable: the right number of answers and every one valid for
+    # its question, the same check _record applies before using them.
+    try:
+        ok = not isinstance(answers, Exception) and len(answers) == n
+        if ok:
+            for q, raw in zip(asked, answers, strict=True):
+                validate_answer(q, raw, engine.name)
+    except Exception:  # noqa: BLE001 -- any malformed result is an unusable call
+        ok = False
+    return (Call(engine.name, elapsed, ok, n),)
 
 
 def _hops(attempts: Sequence[Attempt]) -> tuple[str, ...]:
