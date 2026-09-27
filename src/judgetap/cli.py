@@ -12,6 +12,12 @@ from collections import Counter
 from pathlib import Path
 
 
+def _guard_post(args) -> int:
+    from judgetap.guard.loop import run
+
+    return run()
+
+
 def _guard_hook(args) -> int:
     from judgetap.guard.hook import run
 
@@ -276,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
     )
     hook.set_defaults(func=_guard_hook)
+    gsub.add_parser(
+        "post", help="run as Claude Code's PostToolUse hook (loop detection)"
+    ).set_defaults(func=_guard_post)
     for name, func in (("install", _guard_install), ("uninstall", _guard_uninstall)):
         p = gsub.add_parser(name, help=f"{name} the Claude Code hook")
         p.add_argument(

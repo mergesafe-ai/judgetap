@@ -10,6 +10,7 @@ from pathlib import Path
 from judgetap.errors import JudgetapError
 
 HOOK_COMMAND = "judgetap guard hook"
+POST_COMMAND = "judgetap guard post"  # loop detection, Claude Code only
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
 
@@ -51,7 +52,7 @@ OLD_HOOK_COMMAND = "snapjudge guard hook"  # written by installs before #38
 def _ours(command: str | None) -> bool:
     """Exactly a command this installer writes (now or under the old name);
     anything edited is the user's."""
-    return command in {
+    return command == POST_COMMAND or command in {
         base + suffix
         for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
         for suffix in ("", " --agent cursor", " --agent codex")
@@ -85,53 +86,62 @@ def _event(agent: str) -> str:
     return "beforeShellExecution" if agent == "cursor" else "PreToolUse"
 
 
+def _events(agent: str) -> list[str]:
+    if agent == "claude-code":
+        return ["PreToolUse", "PostToolUse"]
+    return [_event(agent)]
+
+
+def _entry(agent: str, event: str) -> dict:
+    if agent == "cursor":
+        return {"command": hook_command(agent)}
+    command = POST_COMMAND if event == "PostToolUse" else hook_command(agent)
+    # Codex's PreToolUse fires for shell only today; the matcher says so.
+    matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
+    return {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+
+
 def install(path: Path, agent: str = "claude-code") -> bool:
-    """Return True if the hook was added, False if it was already there."""
+    """Add any missing guard hooks. True if the file changed."""
     data = _load(path)
     if agent == "cursor":
         data.setdefault("version", 1)
-    entries = data.setdefault("hooks", {}).setdefault(_event(agent), [])
-    if any(_is_ours(e) for e in entries):
-        if _upgrade_old(
-            data
-        ):  # an install from before the rename: point it at judgetap
-            _write(path, data)
-            return True
-        return False
-    command = hook_command(agent)
-    if agent == "cursor":
-        entries.append({"command": command})
-    else:
-        # Codex's PreToolUse fires for shell only today; the matcher says so.
-        matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
-        entries.append(
-            {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
-        )
-    _write(path, data)
-    return True
+    changed = _upgrade_old(data)  # an install from before the rename
+    for event in _events(agent):
+        entries = data.setdefault("hooks", {}).setdefault(event, [])
+        if not any(_is_ours(e) for e in entries):
+            entries.append(_entry(agent, event))
+            changed = True
+    if changed:
+        _write(path, data)
+    return changed
 
 
 def uninstall(path: Path, agent: str = "claude-code") -> bool:
     data = _load(path)
-    event = _event(agent)
-    pre = data.get("hooks", {}).get(event, [])
-    if not any(_is_ours(e) for e in pre):
-        return False
-    kept = []
-    for entry in pre:
-        if "hooks" not in entry:  # Cursor's flat entries
-            if not _ours(entry.get("command")):
-                kept.append(entry)
+    removed = False
+    for event in _events(agent):
+        entries = data.get("hooks", {}).get(event, [])
+        if not any(_is_ours(e) for e in entries):
             continue
-        # Remove only our hook; keep any others that share its matcher group.
-        hooks = [h for h in entry.get("hooks", []) if not _ours(h.get("command"))]
-        if hooks:
-            kept.append({**entry, "hooks": hooks})
-    data["hooks"][event] = kept
-    if not kept:
-        del data["hooks"][event]
-    if not data["hooks"]:
-        del data["hooks"]
+        removed = True
+        kept = []
+        for entry in entries:
+            if "hooks" not in entry:  # Cursor's flat entries
+                if not _ours(entry.get("command")):
+                    kept.append(entry)
+                continue
+            # Remove only our hook; keep any others that share its matcher group.
+            hooks = [h for h in entry.get("hooks", []) if not _ours(h.get("command"))]
+            if hooks:
+                kept.append({**entry, "hooks": hooks})
+        data["hooks"][event] = kept
+        if not kept:
+            del data["hooks"][event]
+    if not removed:
+        return False
+    if not data.get("hooks"):
+        data.pop("hooks", None)
     _write(path, data)
     return True
 
