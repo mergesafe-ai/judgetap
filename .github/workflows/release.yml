@@ -10,6 +10,12 @@ on:
     branches: [main]
   release:
     types: [published]
+  # Publish an existing tag by hand (e.g. a release whose publish job failed).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. v0.1.0"
+        required: true
 
 permissions:
   contents: write
@@ -66,7 +72,8 @@ jobs:
     if: >-
       always() &&
       ((github.event_name == 'push' && needs.release-please.outputs.released == 'true') ||
-       (github.event_name == 'release' && !github.event.release.prerelease))
+       (github.event_name == 'release' && !github.event.release.prerelease) ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -75,16 +82,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag || github.event.release.tag_name }}
+          ref: ${{ needs.release-please.outputs.tag || github.event.release.tag_name || inputs.tag }}
       - uses: astral-sh/setup-uv@v6
       - name: Check the tag matches the package version
         # The tag arrives through the environment, never interpolated into the
         # script: a release tag is user-controlled text.
         env:
-          TAG: ${{ needs.release-please.outputs.tag || github.event.release.tag_name }}
+          TAG: ${{ needs.release-please.outputs.tag || github.event.release.tag_name || inputs.tag }}
         run: |
           version=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "${TAG#v}" = "$version" || { echo "tag does not match version $version"; exit 1; }
+          # Tags are vX.Y.Z; older ones carry the component: judgetap-vX.Y.Z.
+          tag_version="${TAG#judgetap-}"
+          tag_version="${tag_version#v}"
+          test "$tag_version" = "$version" || { echo "tag does not match version $version"; exit 1; }
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
 
