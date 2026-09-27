@@ -1,62 +1,87 @@
-# snapjudge
+# judgetap
 
-**One API for fast, typed decisions across every Jev-style engine, and a guard for coding agents built on it.**
+**A pre-action guard for coding agents, built on one API for fast, typed AI decisions.**
 
-A new class of models answers questions with a *decision* instead of text: pick one of these labels, place this on a scale, yes or no, each with a probability, in tens to hundreds of milliseconds for a fraction of a cent. TypeSafe's Jev started it; Laya, AgentJev and others followed, and structured-output LLMs can do the same job more slowly.
+<!-- Demo GIF: rendered by the "demo" workflow from docs/demo.tape; enable once docs/demo.gif is merged.
+![judgetap guard holding a force-push](docs/demo.gif)
+-->
 
-Each has its own API, answer shape and way of reporting confidence. snapjudge puts one interface over them:
+```text
+$ snapjudge guard test "git push --force origin main"
+allow  git status  (should allow)
+ deny  git push --force origin main  (should hold)
+ deny  git push --force origin main  (yours)
+```
+
+## Quickstart
+
+```bash
+pip install "git+https://github.com/mergesafe-ai/judgetap"
+snapjudge guard install --for claude-code        # or cursor, codex, all
+snapjudge guard test "git push --force origin main"
+```
+
+> The code and CLI are still named `snapjudge`; they become `judgetap` with [#38](https://github.com/mergesafe-ai/judgetap/issues/38). The `judgetap` package on PyPI is a placeholder until then.
+
+## What it does
+
+- **Guard.** A hook that checks every shell command (and, in Claude Code, every file write and edit) before it runs. Rules catch common destructive forms: recursive deletes outside the workspace, force-pushes and pushes to protected branches, `DROP`/`DELETE` without `WHERE`, `terraform destroy`, and secrets written to files. With an engine configured, a model judges the rest: is it irreversible? off-task? against a rule in `AGENTS.md`? Without an engine, the rules fail closed: anything they can't vouch for asks you.
+- **Library.** One API (`choice`, `score`, `yesno`, `batch`) over every Jev-style decision engine, with a cascade that escalates low-confidence answers to a stronger engine.
+- **Eval.** `snapjudge eval cases.jsonl --engines jev,laya` compares engines on your labelled cases: accuracy, calibration (ECE), latency and cost.
+- **Dashboard.** `snapjudge dashboard` is a local page with recent decisions, holds, asks, latency and cost per engine. You can mark a hold as a false alarm.
+
+## Library
 
 ```python
 import snapjudge as sj
 
-sj.configure(sj.engines.load("jev"))  # needs TYPESAFE_API_KEY; see "Engines" below
+sj.configure(sj.engines.load("jev"))  # needs TYPESAFE_API_KEY
 
 verdict = sj.yesno(
     "Is this shell command hard to undo?",
     context={"command": "git push --force origin main", "task": "fix typo in README"},
 )
-verdict.value  # "yes"
-verdict.p  # 0.97
-verdict.engine  # "jev"
+verdict.value, verdict.p, verdict.engine  # ("yes", 0.97, "jev")
+
+# Ask the cheap engine first, escalate low-confidence answers
+sj.configure(sj.Cascade([sj.engines.load("jev"), sj.engines.load("llm:gemini/gemini-2.0-flash-lite")]))
 ```
 
 ## Engines
 
-```python
-# TypeSafe Jev (TYPESAFE_API_KEY)
-jev = sj.engines.load("jev")
-# Any LiteLLM model: pip install "snapjudge[llm]"
-flash = sj.engines.load("llm:gemini/gemini-2.0-flash-lite")
-# Ask Jev first, escalate low-confidence answers to the LLM
-sj.configure(sj.Cascade([jev, flash]))
-```
+| Spec | Engine | Key |
+|---|---|---|
+| `jev` | TypeSafe Jev (hosted) | `TYPESAFE_API_KEY` |
+| `jev@<url>` / `typesafe:<url>` | Any TypeSafe-compatible server | none on localhost; remote needs the key and https |
+| `laya` | Laya, open weights, runs in process (`pip install "snapjudge[laya]"`) | none |
+| `agentjev` / `agentjev:<url>` | A local AgentJev server | none |
+| `llm:<model>` | Any LiteLLM model (`pip install "snapjudge[llm]"`); probabilities self-reported | the provider's |
 
-Local engines: `sj.engines.load("laya")` runs Laya in process (`pip install "snapjudge[laya]"`; on a CPU-only Linux box install the CPU PyTorch wheel first with `pip install torch --index-url https://download.pytorch.org/whl/cpu`, or pip pulls the multi-GB CUDA build). `sj.engines.load("agentjev")` talks to a local AgentJev server.
+On a CPU-only Linux box, install the CPU PyTorch wheel before `snapjudge[laya]` (`pip install torch --index-url https://download.pytorch.org/whl/cpu`). [snapjudge by Micha0827](https://github.com/Micha0827/snapjudge) is a TypeSafe-compatible local server for Apple Silicon (MLX), an independent project that works as a `jev@http://127.0.0.1:<port>` engine.
 
-Any TypeSafe-compatible server is an engine: `sj.engines.load("jev@http://127.0.0.1:8000")` (no key needed on localhost). For example, [snapjudge by Micha0827](https://github.com/Micha0827/snapjudge) is a TypeSafe-compatible local server on Apple Silicon (MLX); independent project.
+## Guard details
 
-- **Adapters**: Jev, local open-weights models (Laya, AgentJev), and any structured-output LLM (OpenAI, Gemini, Anthropic, Ollama).
-- **Cascade**: ask the cheap, fast engine first; send low-confidence answers to a stronger one, or to a human.
-- **Calibration check**: run your labelled examples through every engine and compare accuracy, calibration, speed and cost.
+- **Agents:** Claude Code (shell, writes and edits), Cursor and Codex (shell only; their hooks don't expose writes and edits).
+- **Engine:** `snapjudge guard install` uses one you already have (`$SNAPJUDGE_ENGINE`, a `TYPESAFE_API_KEY`, or a local AgentJev) and saves it in `~/.snapjudge/guard.toml`, because agents often run hooks without your shell's environment.
+- **Keys:** read from the environment, then the OS keychain (`pip install "snapjudge[keychain]"`, then `snapjudge keys set TYPESAFE_API_KEY`). Keys are never written to config or logs.
+- **Log:** every decision goes to `~/.snapjudge/guard.jsonl` (owner-only, with credentials redacted). See it with `snapjudge guard stats` or `snapjudge dashboard`.
+- **Limits:** the rules are a best-effort denylist, not a sandbox. Shell is a full language; see [SPEC §5](docs/SPEC.md).
 
-## snapjudge guard
+## Reviewed by MergeSafe
 
-A pre-action hook for Claude Code (shell commands, file writes and edits), Cursor and Codex (shell commands only; their hooks don't expose writes and edits). Every command, file write and edit is checked before it runs: a denylist of common destructive forms (`rm -rf /`, force-push to `main`, `DROP TABLE`; best-effort, not a sandbox, see SPEC §5), and, once you configure an engine (`SNAPJUDGE_ENGINE`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Without an engine the guard runs its rules only. Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
+Every PR here is reviewed by [MergeSafe](https://mergesafe.ai) before merge. A few of the catches:
 
-
-Keys: the guard reads `TYPESAFE_API_KEY` from the environment, then from the OS keychain
-(`pip install "snapjudge[keychain]"`, then `snapjudge keys set TYPESAFE_API_KEY`), because
-agents often run hooks without your shell's environment. Keys are never written to config or logs.
+- [#17](https://github.com/mergesafe-ai/judgetap/pull/17): **P0**, commands with secrets in them were written to the guard log in plain text; also `sudo rm -rf /` and `$(rm -rf /)` slipping past the rules.
+- [#16](https://github.com/mergesafe-ai/judgetap/pull/16): the cascade under-reported cost by dropping the engines it consulted before the winner.
+- [#37](https://github.com/mergesafe-ai/judgetap/pull/37): quoted, attached and tab-separated `curl -u` credentials leaking past redaction.
 
 ## Status
 
-Early development. See [docs/SPEC.md](docs/SPEC.md) for the design and the issues for the roadmap.
-
-Built in the open, with every pull request reviewed by [MergeSafe](https://mergesafe.ai).
+Early development. Design in [docs/SPEC.md](docs/SPEC.md); roadmap in the issues.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Every PR is reviewed by MergeSafe.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
