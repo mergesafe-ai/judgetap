@@ -74,7 +74,9 @@ class Cascade:
                 answers = engine.decide([questions[i] for i in pending], context)
             except Exception as err:  # noqa: BLE001 -- any engine failure falls through
                 answers = err
-            calls.extend(_calls_of(engine, answers, start, len(pending)))
+            calls.extend(
+                _calls_of(engine, answers, start, [questions[i] for i in pending])
+            )
             self._record(engine, questions, pending, answers, attempts)
         return self._results(questions, attempts, tuple(calls))
 
@@ -94,7 +96,9 @@ class Cascade:
                 raise
             except Exception as err:  # noqa: BLE001 -- any engine failure falls through
                 answers = err
-            calls.extend(_calls_of(engine, answers, start, len(pending)))
+            calls.extend(
+                _calls_of(engine, answers, start, [questions[i] for i in pending])
+            )
             self._record(engine, questions, pending, answers, attempts)
         return self._results(questions, attempts, tuple(calls))
 
@@ -105,8 +109,13 @@ class Cascade:
         for q, a in zip(questions, attempts, strict=True):
             try:
                 results.append(self._finish(q, a))
-            except CascadeExhaustedError as err:
-                err.calls = calls
+            except Exception as err:
+                # Exhaustion, or an on_exhausted callback that raised: either
+                # way the providers' calls travel with the error.
+                try:
+                    err.calls = calls
+                except AttributeError:
+                    pass  # an exception type that refuses attributes
                 raise
         return [replace(r, calls=calls) for r in results]
 
@@ -163,7 +172,9 @@ class Cascade:
         )
 
 
-def _calls_of(engine: Engine, answers, start: float, n: int) -> tuple[Call, ...]:
+def _calls_of(
+    engine: Engine, answers, start: float, asked: list[Question]
+) -> tuple[Call, ...]:
     """The calls one hop made: a nested composite's own calls when it reports
     them (answers or its exhaustion error), else the one call timed here."""
     inner = getattr(answers, "calls", None) if isinstance(answers, Exception) else None
@@ -174,11 +185,18 @@ def _calls_of(engine: Engine, answers, start: float, n: int) -> tuple[Call, ...]
             inner = None  # a malformed, non-iterable result: timed below
     if inner:
         return tuple(inner)
+    n = len(asked)
+    elapsed = (time.perf_counter() - start) * 1000
+    # ok means usable: the right number of answers and every one valid for
+    # its question, the same check _record applies before using them.
     try:
         ok = not isinstance(answers, Exception) and len(answers) == n
-    except TypeError:
-        ok = False  # malformed result: the engine answered, but not usably
-    return (Call(engine.name, (time.perf_counter() - start) * 1000, ok, n),)
+        if ok:
+            for q, raw in zip(asked, answers, strict=True):
+                validate_answer(q, raw, engine.name)
+    except Exception:  # noqa: BLE001 -- any malformed result is an unusable call
+        ok = False
+    return (Call(engine.name, elapsed, ok, n),)
 
 
 def _hops(attempts: Sequence[Attempt]) -> tuple[str, ...]:

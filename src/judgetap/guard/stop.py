@@ -129,7 +129,12 @@ def _take_block(session: str) -> bool:
 
 
 def _log(
-    session: str | None, outcome: str, reason: str, p: float | None, engine: str | None
+    session: str | None,
+    outcome: str,
+    reason: str,
+    p: float | None,
+    engine: str | None,
+    calls=(),
 ) -> None:
     path = _hook().home() / "guard.jsonl"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -148,6 +153,8 @@ def _log(
         "latency_ms": 0.0,
         "cost_usd": None,
         "error": None,
+        # The engine calls behind this check, so the dashboard counts them.
+        "calls": [c.as_dict() for c in calls],
     }
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(fd, "a") as fh:
@@ -187,7 +194,7 @@ def handle(payload: dict[str, Any], engine=None) -> dict[str, Any] | None:
     )[0]
     p_done = decision.p_yes
     if p_done > threshold():
-        _log(session, "allow", "looks done", p_done, decision.engine)
+        _log(session, "allow", "looks done", p_done, decision.engine, decision.calls)
         return None
     if not _take_block(session):
         _log(
@@ -196,9 +203,12 @@ def handle(payload: dict[str, Any], engine=None) -> dict[str, Any] | None:
             f"not-done but the {MAX_BLOCKS}-block cap is reached",
             p_done,
             decision.engine,
+            decision.calls,
         )
         return None
-    _log(session, "block", "judged not finished", p_done, decision.engine)
+    _log(
+        session, "block", "judged not finished", p_done, decision.engine, decision.calls
+    )
     return {
         "decision": "block",
         "reason": (

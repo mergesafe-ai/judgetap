@@ -142,3 +142,54 @@ def test_records_from_before_calls_still_count(tmp_path):
     (tmp_path / "guard.jsonl").write_text(json.dumps(old) + "\n")
     engines = load(tmp_path)["summary"]["engines"]
     assert engines["jev"] == {"calls": 1, "p50_ms": 200.0, "p95_ms": 200.0}
+
+
+def test_malformed_hop_is_not_ok():
+    import judgetap as jt
+    from judgetap.testing import StaticEngine
+
+    bad = StaticEngine(lambda q, c: {"maybe": 1.0}, name="bad")
+    good = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="good")
+    d = jt.yesno("q", engine=jt.Cascade([bad, good]))
+    by = {c.engine: c.ok for c in d.calls}
+    assert by == {"bad": False, "good": True}
+
+
+def test_raising_callback_keeps_provider_calls():
+    import pytest as _pytest
+
+    import judgetap as jt
+    from judgetap.testing import StaticEngine
+
+    def boom(question, attempts):
+        raise RuntimeError("human unavailable")
+
+    low = StaticEngine(lambda q, c: {"yes": 0.5, "no": 0.5}, name="low")
+    with _pytest.raises(RuntimeError) as info:
+        jt.yesno("q", engine=jt.Cascade([low], on_exhausted=boom))
+    assert [c.engine for c in info.value.calls] == ["low"]
+
+
+def test_stop_records_carry_calls(tmp_path, monkeypatch):
+    import json
+
+    from judgetap.dashboard.data import load
+    from judgetap.guard import stop
+    from judgetap.testing import StaticEngine
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user", "message": {"content": "do x"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "done x"}]},
+            }
+        )
+        + "\n"
+    )
+    engine = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="judge")
+    stop.handle({"session_id": "s1", "transcript_path": str(t)}, engine=engine)
+    assert load(tmp_path)["summary"]["engines"]["judge"]["calls"] == 1
