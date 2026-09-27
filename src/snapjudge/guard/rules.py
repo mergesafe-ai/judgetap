@@ -103,7 +103,6 @@ WRAPPERS = frozenset(
         "time",
         "command",
         "exec",
-        "xargs",
         "stdbuf",
         "timeout",
     }
@@ -322,6 +321,46 @@ def _rm_outside(args: list[str], cwd: Path | None, workspace: Path) -> str | Non
     return None
 
 
+def _git_dirs(cwd: Path) -> tuple[Path, Path] | None:
+    """(git dir, common dir) for the repo containing cwd; worktree aware."""
+    for directory in (cwd, *cwd.parents):
+        git = directory / ".git"
+        try:
+            if git.is_file():  # worktree or submodule: "gitdir: <path>"
+                text = git.read_text(errors="replace").strip()
+                if not text.startswith("gitdir:"):
+                    return None
+                git = (directory / text.split(":", 1)[1].strip()).resolve()
+            if git.is_dir():
+                common = git
+                if (git / "commondir").is_file():
+                    common = (git / (git / "commondir").read_text().strip()).resolve()
+                return git, common
+        except OSError:
+            return None
+    return None
+
+
+def upstream_branch(cwd: Path, branch: str) -> str | None:
+    """The branch `branch` tracks (branch.<name>.merge in .git/config)."""
+    dirs = _git_dirs(cwd)
+    if dirs is None:
+        return None
+    try:
+        config = (dirs[1] / "config").read_text(errors="replace")
+    except OSError:
+        return None
+    section = re.search(
+        r'^\[branch\s+"' + re.escape(branch) + r'"\](.*?)(?=^\[|\Z)',
+        config,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not section:
+        return None
+    merge = re.search(r"^\s*merge\s*=\s*(\S+)", section.group(1), re.MULTILINE)
+    return merge.group(1).removeprefix("refs/heads/") if merge else None
+
+
 def current_branch(cwd: Path) -> str | None:
     """The checked-out branch, read from .git/HEAD: no subprocess, so the
     rules layer stays in microseconds. None if detached or not a repo."""
@@ -355,6 +394,14 @@ def _push_rule(
 ) -> tuple[Outcome, str, str] | None:
     """Judge one `git push` by its destination refs, not by words in it."""
     args = argv[2:]
+    for arg in args:
+        forced = (
+            arg.startswith("--force")
+            or (arg.startswith("-") and not arg.startswith("--") and "f" in arg[1:])
+            or (not arg.startswith("-") and arg.startswith("+"))
+        )
+        if forced:
+            return "hold", "force-push", "force-push rewrites shared history"
     if {"--all", "--mirror"} & set(args):
         return "hold", "push-protected", "pushes every branch, protected ones included"
     positional, skip = [], False
@@ -380,9 +427,20 @@ def _push_rule(
                 f"push destination {spec!r} can't be resolved",
             )
         if dest == "HEAD":
-            dest = branch_of(cwd) if cwd is not None else None
-            if dest is None:
+            branch = branch_of(cwd) if cwd is not None else None
+            if branch is None:
                 return "ask", "push-implicit", "push destination can't be determined"
+            # With push.default=upstream a plain push goes to the tracked
+            # branch, which may be named differently: check both.
+            upstream = upstream_branch(cwd, branch) if spec == "HEAD" else None
+            protected = [b for b in (branch, upstream) if b in PROTECTED_BRANCHES]
+            if protected:
+                return (
+                    "hold",
+                    "push-protected",
+                    f"plain push from {branch!r} can reach protected branch {protected[0]!r}",
+                )
+            continue
         if "*" in dest:
             pattern = re.escape(dest).replace(r"\*", ".*")
             if any(re.fullmatch(pattern, b) for b in PROTECTED_BRANCHES):
@@ -450,7 +508,9 @@ def check_command(
         if r.pattern.search(command)
     ]
     for argv in _commands(command) or []:
-        if argv[:2] == ["git", "push"] and (h := _push_rule(argv, push_cwd, branch_of)):
+        if [Path(argv[0]).name, *argv[1:2]] == ["git", "push"] and (
+            h := _push_rule(argv, push_cwd, branch_of)
+        ):
             hits.append(h)
     if OPAQUE.search(command) and DESTRUCTIVE.search(command):
         hits.append(
@@ -509,3 +569,89 @@ def redact(text: str) -> str:
     for pattern in COMMAND_SECRETS:
         text = pattern.sub(lambda m: m.group("keep") + "[REDACTED]", text)
     return text
+
+
+# Programs whose effect the rules can't bound: without an engine to judge
+# them, they ask. `git` is allowed for the subcommands below only.
+RISKY_PROGRAMS = frozenset(
+    {
+        "dd",
+        "mkfs",
+        "shred",
+        "truncate",
+        "terraform",
+        "kubectl",
+        "helm",
+        "psql",
+        "mysql",
+        "sqlite3",
+        "mongo",
+        "redis-cli",
+        "aws",
+        "gcloud",
+        "az",
+        "xargs",
+        "eval",
+        "sh",
+        "bash",
+        "zsh",
+        "env",
+        "sudo",
+        "doas",
+    }
+)
+SAFE_GIT = frozenset(
+    {
+        "status",
+        "log",
+        "diff",
+        "show",
+        "add",
+        "commit",
+        "fetch",
+        "pull",
+        "checkout",
+        "switch",
+        "restore",
+        "stash",
+        "branch",
+        "tag",
+        "merge",
+        "rebase",
+        "rev-parse",
+        "remote",
+        "blame",
+        "worktree",
+        "init",
+        "clone",
+        "push",
+        "reset",
+        "clean",
+        "grep",
+        "ls-files",
+        "describe",
+        "cherry-pick",
+        "mv",
+        "rm",
+    }
+)
+
+
+def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
+    """With no engine, fail closed: ask for what the rules can't vouch for.
+
+    Called only after check_command found nothing. Programs with unbounded
+    effects ask; so do git subcommands outside a known set, and any
+    destructive command whose shell the rules can't see through.
+    """
+    if OPAQUE.search(command) and DESTRUCTIVE.search(command):
+        return "ask", "rules-only", "no engine to judge an opaque destructive command"
+    for argv in _commands(command) or []:
+        prog = Path(argv[0]).name
+        if prog in RISKY_PROGRAMS or prog.startswith("mkfs"):
+            return "ask", "rules-only", f"no engine configured to judge {prog!r}"
+        if prog == "git":
+            sub = next((a for a in argv[1:] if not a.startswith("-")), None)
+            if sub not in SAFE_GIT:
+                return "ask", "rules-only", f"no engine configured to judge 'git {sub}'"
+    return None

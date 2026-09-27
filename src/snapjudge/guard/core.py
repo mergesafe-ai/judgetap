@@ -10,7 +10,12 @@ from pathlib import Path
 
 from snapjudge.api import batch
 from snapjudge.engine import Engine
-from snapjudge.guard.rules import Outcome, check_command, check_content
+from snapjudge.guard.rules import (
+    Outcome,
+    check_command,
+    check_content,
+    rules_only_check,
+)
 from snapjudge.types import Question
 
 # Thresholds on p(yes). Holds need strong evidence; the guard should stay
@@ -133,6 +138,11 @@ def check(
     ):
         return Verdict("allow", "skip", "read-only command")
     if engine is None:
+        if action.command is not None and (
+            fallback := rules_only_check(action.command)
+        ):
+            outcome, name, reason = fallback
+            return Verdict(outcome, "rules", reason, rule=name)
         return Verdict("allow", "none", "no engine configured; rules only")
     return _judge(action, engine)
 
@@ -186,8 +196,11 @@ def project_rules(cwd: Path) -> str | None:
         for name in ("guard.md", "AGENTS.md", "CLAUDE.md"):
             candidate = directory / name
             if candidate.is_file():
-                with candidate.open(errors="replace") as fh:
-                    return fh.read(MAX_RULES_CHARS)  # only this much is ever sent
+                try:
+                    with candidate.open(errors="replace") as fh:
+                        return fh.read(MAX_RULES_CHARS)  # only this much is ever sent
+                except OSError:
+                    continue  # unreadable: try the next name, don't abort the check
         if (directory / ".git").exists():
             break
     return None

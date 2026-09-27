@@ -328,3 +328,51 @@ def test_unreadable_git_file_is_unknown_branch(tmp_path):
 def test_repo_option_does_not_hide_the_refspec(command):
     hit = check_command(command, WS, branch_of=on_branch("feat"))
     assert hit[:2] == ("hold", "push-protected")
+
+
+@pytest.mark.parametrize(
+    ("command", "rule"),
+    [
+        ("/usr/bin/git push origin main", "push-protected"),
+        ("git push -uf origin feature", "force-push"),
+        ("git push --force-with-lease=main origin feat", "force-push"),
+        ("printf '/outside' | xargs -I{} rm -rf {}", "rm-outside-workspace"),
+    ],
+)
+def test_round8_forms(command, rule):
+    hit = check_command(command, WS, branch_of=on_branch("feat"))
+    assert hit is not None and hit[1] == rule
+
+
+def test_plain_push_checks_the_upstream_branch(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (tmp_path / ".git" / "config").write_text(
+        '[core]\n\tbare = false\n[branch "feature"]\n\tremote = origin\n\tmerge = refs/heads/main\n'
+    )
+    hit = check_command("git push", tmp_path)
+    assert hit[:2] == ("hold", "push-protected")
+    (tmp_path / ".git" / "config").write_text(
+        '[branch "feature"]\n\tmerge = refs/heads/feature\n'
+    )
+    assert check_command("git push", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "expect"),
+    [
+        ("terraform apply", "ask"),
+        ("kubectl delete ns prod", "ask"),
+        ("aws s3 rm s3://b --recursive", "ask"),
+        ("git filter-repo --force", "ask"),
+        ("echo x | xargs rm", "ask"),
+        ("git commit -m wip", None),
+        ("make test", None),
+        ("rm -rf build", None),
+    ],
+)
+def test_rules_only_mode_fails_closed(command, expect):
+    from snapjudge.guard.rules import rules_only_check
+
+    hit = rules_only_check(command)
+    assert (hit[0] if hit else None) == expect

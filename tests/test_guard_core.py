@@ -145,3 +145,26 @@ def test_multiline_read_only_prefix_is_still_judged():
 def test_process_substitution_is_judged():
     engine = judge()
     assert check(act("cat <(make deploy)"), engine).layer == "judge"
+
+
+def test_rules_only_asks_for_unbounded_programs():
+    v = check(act("terraform apply -auto-approve"), None)
+    assert (v.outcome, v.rule) == ("ask", "rules-only")
+
+
+def test_engine_configured_judges_instead_of_asking():
+    engine = judge()
+    v = check(act("terraform apply -auto-approve"), engine)
+    assert v.layer == "judge" and v.outcome == "allow"
+
+
+def test_unreadable_project_rules_are_skipped(tmp_path):
+    (tmp_path / ".git").mkdir()
+    rules = tmp_path / "guard.md"
+    rules.write_text("x")
+    rules.chmod(0)
+    (tmp_path / "AGENTS.md").write_text("use worktrees")
+    try:
+        assert project_rules(tmp_path) == "use worktrees"
+    finally:
+        rules.chmod(0o600)
