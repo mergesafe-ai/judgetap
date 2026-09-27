@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections.abc import Callable
@@ -66,7 +67,7 @@ COMMAND_RULES: tuple[Rule, ...] = (
     ),
     _r(
         "git-clean",
-        r"\bgit\s+clean\s+-\w*f",
+        r"\bgit\s+clean\s+(-\w*\s+)*-\w*f",
         "ask",
         "git clean -f deletes untracked files",
     ),
@@ -361,6 +362,16 @@ def upstream_branch(cwd: Path, branch: str) -> str | None:
     return merge.group(1).removeprefix("refs/heads/") if merge else None
 
 
+def _global_configs() -> list[Path]:
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    candidates = [
+        os.environ.get("GIT_CONFIG_GLOBAL") or str(Path.home() / ".gitconfig"),
+        str(Path(xdg) / "git" / "config"),
+        os.environ.get("GIT_CONFIG_SYSTEM") or "/etc/gitconfig",
+    ]
+    return [Path(c) for c in candidates if Path(c).is_file()]
+
+
 def _custom_push_config(cwd: Path) -> bool:
     """True when .git/config sets anything that changes where a plain push
     goes beyond current/upstream: remote push refspecs, pushRemote, or a
@@ -372,6 +383,13 @@ def _custom_push_config(cwd: Path) -> bool:
         config = (dirs[1] / "config").read_text(errors="replace")
     except OSError:
         return True  # can't read it: assume the worst
+    # Global and system config apply too (a repo value overrides them, but
+    # anything set there is enough to make the destination uncertain).
+    for path in _global_configs():
+        try:
+            config += "\n" + path.read_text(errors="replace")
+        except OSError:
+            continue
     if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
         return True
     default = re.search(r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL)
@@ -709,7 +727,14 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
             i = progs.index("git")
             sub = next((a for a in argv[i + 1 :] if not a.startswith("-")), None)
             args = set(argv[i + 1 :])
-            if sub not in SAFE_GIT or args & DESTRUCTIVE_GIT_ARGS:
+            # Short flags may be combined (-fdx): compare letter by letter.
+            letters = {
+                f"-{c}"
+                for a in args
+                if a.startswith("-") and not a.startswith("--")
+                for c in a[1:]
+            }
+            if sub not in SAFE_GIT or (args | letters) & DESTRUCTIVE_GIT_ARGS:
                 return "ask", "rules-only", f"no engine configured to judge 'git {sub}'"
     return None
 

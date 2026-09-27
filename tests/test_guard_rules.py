@@ -411,3 +411,28 @@ def test_push_config_we_do_not_model_asks(tmp_path):
     assert check_command("git push", tmp_path)[:2] == ("ask", "push-implicit")
     (tmp_path / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
     assert check_command("git push", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "command", ["git clean -fdx", "git clean -dxf", "git clean -d -f"]
+)
+def test_combined_clean_flags(command):
+    from snapjudge.guard.rules import rules_only_check
+
+    hit = check_command(command, WS) or rules_only_check(command)
+    assert hit is not None and hit[0] in ("ask", "hold")
+
+
+def test_global_push_default_is_honoured(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text("[core]\n\tbare = false\n")
+    glob = tmp_path / "gitconfig"
+    glob.write_text("[push]\n\tdefault = matching\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
+    glob.write_text("[push]\n\tdefault = simple\n")
+    assert check_command("git push", repo) is None
