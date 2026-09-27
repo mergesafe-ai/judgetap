@@ -139,9 +139,33 @@ def _guard_stats(args) -> int:
     return 0
 
 
+def _dashboard(args) -> int:
+    import webbrowser
+
+    from snapjudge.dashboard.server import serve
+    from snapjudge.guard.hook import home
+
+    server = serve(home(), args.port)
+    url = f"http://127.0.0.1:{args.port}/"
+    print(f"snapjudge dashboard on {url} (Ctrl+C to stop); reading {home()}")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="snapjudge")
     sub = parser.add_subparsers(dest="command", required=True)
+    dash = sub.add_parser("dashboard", help="local page over the guard log")
+    dash.add_argument("--port", type=int, default=8765)
+    dash.add_argument("--no-browser", action="store_true", help="don't open a browser")
+    dash.set_defaults(func=_dashboard)
     guard = sub.add_parser("guard", help="pre-action guard for coding agents")
     gsub = guard.add_subparsers(dest="guard_command", required=True)
     hook = gsub.add_parser("hook", help="run as an agent's pre-action hook")
