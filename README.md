@@ -63,7 +63,7 @@ On a CPU-only Linux box, install the CPU PyTorch wheel before `judgetap[laya]` (
 
 ## Guard details
 
-**Loop detection (Claude Code).** A `PostToolUse` hook (`judgetap guard post`, added by `guard install --for claude-code`) notices when the same command or edit fails the same way three times within eight actions and adds a note asking the agent to re-plan. It never blocks, uses no model, and stores only a redacted action and an error hash per session. Cursor and Codex: not yet.
+**Loop detection (Claude Code).** `PostToolUse` and `PostToolUseFailure` hooks (`judgetap guard post`, added by `guard install --for claude-code`) notices when the same command or edit fails the same way three times within eight actions and adds a note asking the agent to re-plan. It never blocks, uses no model, and stores only a redacted action and an error hash per session. Cursor and Codex: not yet.
 
 - **Agents:** Claude Code (shell, writes and edits), Cursor and Codex (shell only; their hooks don't expose writes and edits).
 - **Engine:** `judgetap guard install` uses one you already have (`$JUDGETAP_ENGINE`, a `TYPESAFE_API_KEY`, or a local AgentJev) and saves it in `~/.judgetap/guard.toml`, because agents often run hooks without your shell's environment.

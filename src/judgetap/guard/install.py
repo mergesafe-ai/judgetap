@@ -89,7 +89,14 @@ def _event(agent: str) -> str:
 
 def _events(agent: str, with_stop: bool = False) -> list[str]:
     if agent == "claude-code":
-        return ["PreToolUse", "PostToolUse", *(["Stop"] if with_stop else [])]
+        # Loop detection needs both: failures arrive only on
+        # PostToolUseFailure, successes (which end a streak) on PostToolUse.
+        return [
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            *(["Stop"] if with_stop else []),
+        ]
     return [_event(agent)]
 
 
@@ -98,7 +105,11 @@ def _entry(agent: str, event: str) -> dict:
         return {"command": hook_command(agent)}
     if event == "Stop":  # Stop takes no matcher
         return {"hooks": [{"type": "command", "command": STOP_COMMAND}]}
-    command = POST_COMMAND if event == "PostToolUse" else hook_command(agent)
+    command = (
+        POST_COMMAND
+        if event in ("PostToolUse", "PostToolUseFailure")
+        else hook_command(agent)
+    )
     # Codex's PreToolUse fires for shell only today; the matcher says so.
     matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
     return {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}

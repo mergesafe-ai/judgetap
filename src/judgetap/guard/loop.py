@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -50,10 +51,20 @@ EXIT_PREFIX = re.compile(r"^\s*exit code[: ]\s*(-?\d+)", re.IGNORECASE)
 
 
 def failure(payload: dict[str, Any]) -> str | None:
-    """A short hash of the error, or None when the call succeeded."""
+    """A short hash of the error, or None when the call succeeded.
+
+    Claude Code sends failures on PostToolUseFailure with the error as a
+    top-level `error` string (for Bash, first line "Exit code N"); successes
+    arrive on PostToolUse. The tool_response checks cover other agents and
+    older shapes."""
     resp = payload.get("tool_response")
     error = payload.get("error")
-    text, failed, code = "", bool(error), None
+    failure_event = payload.get("hook_event_name") == "PostToolUseFailure"
+    text, failed, code = "", bool(error) or failure_event, None
+    if isinstance(error, str):
+        m = EXIT_PREFIX.match(error)
+        if m:
+            code = int(m.group(1))
     if isinstance(resp, dict):
         code = resp.get("exit_code", resp.get("exitCode", resp.get("returncode")))
         if isinstance(code, int) and code != 0:
@@ -78,6 +89,72 @@ def failure(payload: dict[str, Any]) -> str | None:
         # No diagnostic text: distinguish failures by their exit status.
         stable = f"exit:{code}"
     return hashlib.sha256(stable.encode()).hexdigest()[:12]
+
+
+SESSION_TTL_SECONDS = 7 * 24 * 3600
+PRUNE_EVERY_SECONDS = 3600
+
+
+def prune_sessions(directory: Path, now: float | None = None) -> None:
+    """Delete session state (json, stop, tmp) untouched for SESSION_TTL_SECONDS.
+
+    Lock files are never deleted: unlinking a lock someone holds would let a
+    second hook lock a fresh inode and break mutual exclusion. They are empty,
+    so keeping them costs an inode, not space. A session's data is only
+    removed while holding its lock without waiting; a busy session is skipped.
+    Runs at most once per PRUNE_EVERY_SECONDS and never raises."""
+    try:
+        now = time.time() if now is None else now
+        marker = directory / ".pruned"
+        if marker.exists() and now - marker.stat().st_mtime < PRUNE_EVERY_SECONDS:
+            return
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        marker.touch()
+        os.utime(marker, (now, now))
+        for f in directory.iterdir():
+            if f.name == ".pruned" or f.suffix not in (".json", ".stop", ".tmp"):
+                continue
+            try:
+                if now - f.stat().st_mtime <= SESSION_TTL_SECONDS:
+                    continue
+                _unlink_if_unlocked(f)
+            except OSError:
+                continue
+    except OSError:
+        return
+
+
+TMP_NAME = re.compile(r"^(?P<stem>.+)\.[0-9a-f]{32}\.tmp$")
+
+
+def _lock_for(f: Path) -> Path:
+    """The lock _session_lock takes for this file. State files are
+    `<id>.json` / `<id>.stop` and lock `<id>.lock` (with_suffix, so a
+    session id may itself contain dots); their temp files are
+    `<id>.<uuid>.tmp` (with_suffix replaces .json/.stop), so the stem before
+    the uuid is the session id."""
+    m = TMP_NAME.match(f.name)
+    if m:
+        return f.with_name(m.group("stem") + ".lock")
+    return f.with_suffix(".lock")
+
+
+def _unlink_if_unlocked(f: Path) -> None:
+    """Remove f only while holding its session lock (non-blocking)."""
+    lock = _lock_for(f)
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            pass  # no flock (Windows): best effort, as for the hooks themselves
+        except OSError:
+            return  # a hook holds it: this session is in use, keep its data
+        f.unlink(missing_ok=True)
+    finally:
+        os.close(fd)
 
 
 def _state_path(session: str | None) -> Path | None:
@@ -167,6 +244,9 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
     path = _state_path(payload.get("session_id"))
     if act is None or path is None:
         return None
+    if payload.get("is_interrupt"):
+        return None  # an abort, not an error the tool reported: not a loop signal
+    prune_sessions(path.parent)
     # Only a hash and the (redacted) action are stored: never file contents.
     # Hooks for one session can finish together: serialise the
     # read-append-write so no action is lost.
@@ -187,9 +267,13 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     _log(payload.get("session_id"), actions[-1]["act"], count)
     shown = actions[-1]["act"].split(":", 1)[1][:200]
+    event = payload.get("hook_event_name")
+    if event not in ("PostToolUse", "PostToolUseFailure"):
+        event = "PostToolUseFailure"
     return {
         "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
+            # Answer on the event that fired (PostToolUseFailure for failures).
+            "hookEventName": event,
             "additionalContext": (
                 f"judgetap: `{shown}` has now failed the same way {count} times; "
                 "stop and re-plan (read the error, try a different approach)."
