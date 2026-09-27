@@ -6,6 +6,7 @@ import math
 import time
 from collections.abc import Sequence
 
+from snapjudge import decision_log
 from snapjudge.engine import Context, Engine, RawAnswer
 from snapjudge.errors import InvalidAnswerError, NoEngineError
 from snapjudge.types import Decision, Question
@@ -15,17 +16,25 @@ from snapjudge.types import Decision, Question
 SUM_TOLERANCE = 1e-3
 
 _default_engine: Engine | None = None
+_log = False
 
 
-def configure(engine: Engine | None) -> None:
+def configure(engine: Engine | None, *, log: bool = False) -> None:
     """Set the process-wide default engine; None clears it.
 
-    A call's own `engine=` argument always takes precedence. Engine adapters
-    and file/env configuration arrive with #2; until then an engine is any
-    object implementing `snapjudge.Engine`.
+    A call's own `engine=` argument always takes precedence. With `log=True`
+    (or SNAPJUDGE_LOG=1) each decision is appended to the local decision log
+    that `snapjudge dashboard` reads; the context is never logged.
     """
-    global _default_engine
+    global _default_engine, _log
     _default_engine = engine
+    _log = log
+
+
+def _finish(decisions: list[Decision]) -> list[Decision]:
+    if decision_log.enabled(_log):
+        decision_log.record(decisions)
+    return decisions
 
 
 def _resolve(engine: Engine | None) -> Engine:
@@ -103,7 +112,7 @@ def batch(
     start = time.perf_counter()
     answers = chosen.decide(questions, context)
     latency_ms = (time.perf_counter() - start) * 1000
-    return _decisions(questions, answers, chosen, latency_ms)
+    return _finish(_decisions(questions, answers, chosen, latency_ms))
 
 
 async def abatch(
@@ -118,7 +127,7 @@ async def abatch(
     start = time.perf_counter()
     answers = await chosen.adecide(questions, context)
     latency_ms = (time.perf_counter() - start) * 1000
-    return _decisions(questions, answers, chosen, latency_ms)
+    return _finish(_decisions(questions, answers, chosen, latency_ms))
 
 
 def choice(

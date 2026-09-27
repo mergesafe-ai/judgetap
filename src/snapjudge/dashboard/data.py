@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, date, datetime, timedelta
@@ -41,6 +42,7 @@ def record_id(record: dict[str, Any], line: int = 0) -> str:
 
 
 _cache: dict[tuple, dict[str, Any]] = {}
+_cache_lock = threading.Lock()  # handlers run on ThreadingHTTPServer threads
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:
@@ -62,10 +64,12 @@ def load(home: Path, today: date | None = None) -> dict[str, Any]:
         _stamp(home / "guard.jsonl"),
         _stamp(home / "feedback.jsonl"),
     )
-    if key not in _cache:
-        _cache.clear()  # only the latest state is worth keeping
-        _cache[key] = _load(home, today)
-    return _cache[key]
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            _cache.clear()  # only the latest state is worth keeping
+            hit = _cache[key] = _load(home, today)
+        return hit
 
 
 def _load(home: Path, today: date) -> dict[str, Any]:
@@ -80,10 +84,21 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
     calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
-    cost, total, false_holds = 0.0, 0, 0
+    cost, total, false_holds, library = 0.0, 0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
         r["id"] = record_id(r, n)
+        r["source"] = r.get("source") or "guard"
         r["false_alarm"] = r["id"] in false_alarms
+        cost += r.get("cost_usd") or 0
+        recent.append(r)
+        if r["source"] == "library":
+            # Library outcomes are answers ("billing", "yes"), not guard
+            # verdicts: counted apart, kept out of hold/ask/allow and the chart.
+            library += 1
+            if r.get("engine"):
+                by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+                calls[r["engine"]] += 1
+            continue
         total += 1
         outcomes[r.get("outcome")] += 1
         if r.get("outcome") == "hold" and r["false_alarm"]:
@@ -91,13 +106,12 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
             by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
             calls[r["engine"]] += 1
-        cost += r.get("cost_usd") or 0
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
             per_day[day][r.get("outcome")] += 1
-        recent.append(r)
     summary = {
         "total": total,
+        "library": library,
         "outcomes": dict(outcomes),
         "holds_per_1000": round(1000 * outcomes["hold"] / total, 1) if total else None,
         "false_alarms": false_holds,
