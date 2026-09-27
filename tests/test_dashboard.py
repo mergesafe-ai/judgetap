@@ -284,7 +284,9 @@ def test_library_records_are_counted_apart(tmp_path):
     assert s["summary"]["total"] == 1 and s["summary"]["library"] == 1
     assert s["summary"]["outcomes"] == {"hold": 1}
     assert s["summary"]["per_day"]["2026-09-26"] == {"hold": 1}
-    assert s["summary"]["engines"]["jev"]["calls"] == 1
+    assert (
+        "jev" not in s["summary"]["engines"]
+    )  # library calls stay out of the guard engine table
     assert {r["source"] for r in s["recent"]} == {"guard", "library"}
 
 

@@ -6,7 +6,7 @@ import json
 import math
 import os
 import threading
-from collections import Counter, OrderedDict, defaultdict, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -82,12 +82,7 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     per_day: dict[str, Counter] = {d: Counter() for d in window}
     outcomes: Counter = Counter()
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
-    calls: Counter = Counter()
-    # A batch's records are written together, so remembering the last few
-    # (call, engine) pairs is enough to count each once: memory stays bounded.
-    seen_calls: OrderedDict[tuple[str, str], None] = (
-        OrderedDict()
-    )  # true totals; the latency deques are capped
+    calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds, library = 0.0, 0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
@@ -100,16 +95,14 @@ def _load(home: Path, today: date) -> dict[str, Any]:
             # Library outcomes are answers ("billing", "yes"), not guard
             # verdicts: counted apart, kept out of hold/ask/allow and the chart.
             library += 1
-            _count_hops(r, calls, by_engine, seen_calls)
             continue
         total += 1
         outcomes[r.get("outcome")] += 1
         if r.get("outcome") == "hold" and r["false_alarm"]:
             false_holds += 1
-        if r.get("hops") or (
-            r.get("layer") == "judge" and not r.get("error") and r.get("engine")
-        ):
-            _count_hops(r, calls, by_engine, seen_calls)
+        if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
+            by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+            calls[r["engine"]] += 1
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
             per_day[day][r.get("outcome")] += 1
@@ -131,31 +124,6 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "per_day": {d: dict(c) for d, c in per_day.items()},
     }
     return {"summary": summary, "recent": list(recent)[::-1]}
-
-
-FALLBACK = "fallback"  # the cascade's on_exhausted callback, not an engine
-
-
-def _count_hops(r, calls, by_engine, seen_calls) -> None:
-    """Count each engine a record's call consulted, once per call id (a batch
-    shares one). Latency is only sampled when a single engine answered the
-    whole record without a cascade: a cascade's end-to-end time can't be
-    split between the engines it tried, so it isn't attributed to any."""
-    engine = r.get("engine")
-    hops = [h for h in (r.get("hops") or ([engine] if engine else [])) if h != FALLBACK]
-    call = r.get("call") or r["id"]
-    for hop in hops:
-        key = (call, hop)
-        if key in seen_calls:
-            continue
-        seen_calls[key] = None
-        if len(seen_calls) > 256:
-            seen_calls.popitem(last=False)
-        calls[hop] += 1
-    single = len(hops) == 1 and hops[0] == engine and not r.get("error")
-    if single and (call, "latency") not in seen_calls:
-        seen_calls[(call, "latency")] = None
-        by_engine[engine].append(float(r.get("latency_ms") or 0))
 
 
 def _rank(values: Iterable[float], q: float) -> float | None:

@@ -32,12 +32,10 @@ def record(decisions: Sequence[Decision]) -> None:
         path = home() / "guard.jsonl"
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         ts = datetime.now(UTC).isoformat(timespec="milliseconds")
-        call = uuid.uuid4().hex  # one engine call answered the whole batch
         lines = [
             json.dumps(
                 {
                     "id": uuid.uuid4().hex,
-                    "call": call,
                     "ts": ts,
                     "source": "library",
                     "tool": "library",
@@ -45,8 +43,6 @@ def record(decisions: Sequence[Decision]) -> None:
                     "outcome": d.value,
                     "layer": "library",
                     "engine": d.engine,
-                    # Every engine consulted, for cascades (winner last).
-                    "hops": list(d.meta.get("hops") or [d.engine]),
                     "p": round(d.p, 4),
                     "latency_ms": round(d.latency_ms, 1),
                     "cost_usd": d.cost_usd,

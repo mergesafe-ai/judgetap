@@ -72,7 +72,6 @@ class Verdict:
     rule: str | None = None
     p: dict[str, float] = field(default_factory=dict)
     engine: str | None = None
-    hops: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     cost_usd: float | None = None
     error: str | None = None
@@ -163,34 +162,25 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         keys.remove("breaks_rule")
     start = time.perf_counter()
     try:
+        # log=False: the guard writes its own record; its judge questions aren't
+        # library decisions.
         decisions = batch(
             [QUESTIONS[k] for k in keys], context, engine=engine, log=False
         )
     except Exception as err:  # noqa: BLE001 -- the judge must never break the agent
         # Fail closed like rules-only mode: an unreachable judge is no engine.
         error = f"{type(err).__name__}: {err}"
-        tried = list(
-            getattr(err, "hops", ())
-        )  # engines an exhausted cascade still called
         fallback = rules_only_check(action.command) if action.command else None
         if fallback:
             outcome, name, reason = fallback
-            return Verdict(outcome, "rules", reason, rule=name, error=error, hops=tried)
-        return Verdict(
-            "allow", "judge", "judgement failed; rules only", error=error, hops=tried
-        )
+            return Verdict(outcome, "rules", reason, rule=name, error=error)
+        return Verdict("allow", "judge", "judgement failed; rules only", error=error)
     latency = (time.perf_counter() - start) * 1000
     p = {k: d.p_yes for k, d in zip(keys, decisions, strict=True)}
     costs = [d.cost_usd for d in decisions if d.cost_usd is not None]
     common = {
         "p": p,
         "engine": decisions[0].engine,
-        # Every engine a cascade consulted, across the judge's questions.
-        "hops": list(
-            dict.fromkeys(
-                h for d in decisions for h in (d.meta.get("hops") or [d.engine])
-            )
-        ),
         "latency_ms": latency,
         "cost_usd": sum(costs) if costs else None,
     }
