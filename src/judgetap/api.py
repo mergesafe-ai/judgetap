@@ -96,6 +96,33 @@ def _tag_failure(err: Exception, engine: Engine, latency_ms: float, n: int) -> N
             pass  # exceptions without a __dict__: no call record
 
 
+def _checked(
+    questions: Sequence[Question],
+    answers: Sequence[RawAnswer],
+    engine: Engine,
+    latency_ms: float,
+) -> list[Decision]:
+    """_decisions, but an answer that fails validation after the engine
+    returned still carries the calls that were made (marked not ok)."""
+    try:
+        return _decisions(questions, answers, engine, latency_ms)
+    except Exception as err:
+        try:
+            reported = next(
+                (tuple(r.calls) for r in answers if getattr(r, "calls", ())), ()
+            )
+        except TypeError:
+            reported = ()
+        if reported and not getattr(err, "calls", None):
+            try:
+                err.calls = reported  # a composite's own calls, as it reported them
+            except AttributeError:
+                pass
+        else:
+            _tag_failure(err, engine, latency_ms, len(questions))
+        raise
+
+
 def _decisions(
     questions: Sequence[Question],
     answers: Sequence[RawAnswer],
@@ -151,7 +178,7 @@ def batch(
         _tag_failure(err, chosen, (time.perf_counter() - start) * 1000, len(questions))
         raise
     latency_ms = (time.perf_counter() - start) * 1000
-    return _finish(_decisions(questions, answers, chosen, latency_ms), log)
+    return _finish(_checked(questions, answers, chosen, latency_ms), log)
 
 
 async def abatch(
@@ -171,7 +198,7 @@ async def abatch(
         _tag_failure(err, chosen, (time.perf_counter() - start) * 1000, len(questions))
         raise
     latency_ms = (time.perf_counter() - start) * 1000
-    return await _afinish(_decisions(questions, answers, chosen, latency_ms), log)
+    return await _afinish(_checked(questions, answers, chosen, latency_ms), log)
 
 
 def choice(
