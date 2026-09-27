@@ -90,7 +90,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+        # Published only: a draft release isn't public yet.
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          test "$draft" = "false" || { echo "release is a draft; publish it first"; exit 1; }
       - name: Check the tag matches the package version
         # The tag arrives through the environment, never interpolated into the
         # script: a release tag is user-controlled text.
@@ -126,9 +129,13 @@ jobs:
         run: |
           uv run --no-project python - <<'EOF'
           import json, os, re, pathlib
-          # run_number * 100 + attempt: a rerun (same run number) still gets a
-          # new, higher version; up to 99 attempts per run.
-          run = int(os.environ["RUN_NUMBER"]) * 100 + int(os.environ["RUN_ATTEMPT"])
+          # <run_number><attempt as 3 digits>: a rerun gets a new, higher
+          # version, and runs never overlap (run 42 attempt 1 = 42001, run 43
+          # attempt 1 = 43001). GitHub caps reruns far below 1000.
+          attempt = int(os.environ["RUN_ATTEMPT"])
+          if not 1 <= attempt <= 999:
+              raise SystemExit(f"run attempt {attempt} out of range")
+          run = int(os.environ["RUN_NUMBER"]) * 1000 + attempt
           current = json.load(open(".release-please-manifest.json"))["."]
           major, minor, patch = (int(x) for x in current.split("."))
           dev = f"{major}.{minor}.{patch + 1}.dev{run}"
