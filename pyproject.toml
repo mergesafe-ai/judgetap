@@ -29,3 +29,6 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/mergesafe-ai/snapjudge"
+
+[tool.hatch.build]
+artifacts = ["src/snapjudge/dashboard/page.html"]

@@ -369,3 +369,27 @@ def test_reinstall_keeps_existing_engine(tmp_path, monkeypatch, capsys):
     (tmp_path / "home" / "guard.toml").write_text('engine = "agentjev"\n')
     cli.main(["guard", "install", "--scope", "project"])
     assert "keeping agentjev" in capsys.readouterr().out
+
+
+def test_reinstall_keeps_chosen_engine_unless_detect(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "guard.toml").write_text('engine = "llm:openai/x"\n')
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    main(["guard", "install", "--scope", "project"])
+    assert 'engine = "llm:openai/x"' in (tmp_path / "home" / "guard.toml").read_text()
+    main(["guard", "install", "--scope", "project", "--detect"])
+    assert 'engine = "jev"' in (tmp_path / "home" / "guard.toml").read_text()
+
+
+def test_write_engine_keeps_similar_keys_and_rejects_unknown(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\nengine_options = "strict"\n')
+    write_engine(tmp_path, "agentjev")
+    assert 'engine_options = "strict"' in toml.read_text()
+    with pytest.raises(ValueError, match="unknown engine"):
+        write_engine(tmp_path, "typo")

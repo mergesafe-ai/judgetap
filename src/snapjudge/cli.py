@@ -14,7 +14,18 @@ from pathlib import Path
 def _guard_hook(args) -> int:
     from snapjudge.guard.hook import run
 
-    return run()
+    return run(agent=args.agent)
+
+
+def _agents(args) -> list[str]:
+    from snapjudge.guard.install import detected_agents
+
+    if args.agent != "all":
+        return [args.agent]
+    found = detected_agents()
+    if not found:
+        print("No agent config directory found (~/.claude, ~/.cursor, ~/.codex).")
+    return found
 
 
 def _guard_install(args) -> int:
@@ -26,30 +37,39 @@ def _guard_install(args) -> int:
         write_engine,
     )
 
-    path = settings_path(args.scope, Path.cwd())
-    added = install(path)
-    print(f"{'Installed' if added else 'Already installed'}: {path}")
-    spec, why = detect_engine()
+    for agent in _agents(args):
+        path = settings_path(args.scope, Path.cwd(), agent)
+        added = install(path, agent)
+        print(f"{agent}: {'installed' if added else 'already installed'} in {path}")
+        if agent == "codex":
+            print("  codex: review and trust the new hook with /hooks before it runs.")
     existing = engine_spec()
-    if spec:
-        try:
-            saved = write_engine(home(), spec)
-        except ValueError as err:
-            print(f"Engine: not saved ({err}).")
-        else:
-            print(f"Engine: {spec} ({why}); saved to {saved}")
-            if spec.startswith("jev"):
-                print(
-                    "  Jev reads TYPESAFE_API_KEY at hook time: make sure the agent's"
-                )
-                print("  environment has it, or the guard falls back to rules only.")
-    elif existing:
-        print(f"Engine: keeping {existing} from {home() / 'guard.toml'} ({why}).")
+    if existing and not args.detect:
+        # A chosen engine is kept; re-detection only when asked for.
+        print(f"Engine: keeping {existing} (re-detect with --detect).")
     else:
-        print(f"Engine: none ({why}).")
-        print("  For judgements: export TYPESAFE_API_KEY, or start an AgentJev server,")
-        print('  then run this install again; or set engine = "llm:<model>" in')
-        print("  ~/.snapjudge/guard.toml.")
+        spec, why = detect_engine()
+        if spec:
+            try:
+                saved = write_engine(home(), spec)
+            except ValueError as err:
+                print(f"Engine: not saved ({err}).")
+            else:
+                print(f"Engine: {spec} ({why}); saved to {saved}")
+                if spec.startswith("jev"):
+                    print(
+                        "  Jev reads TYPESAFE_API_KEY at hook time: make sure the agent's"
+                    )
+                    print(
+                        "  environment has it, or the guard falls back to rules only."
+                    )
+        else:
+            print(f"Engine: none ({why}).")
+            print(
+                "  For judgements: export TYPESAFE_API_KEY, or start an AgentJev server,"
+            )
+            print('  then run this install again; or set engine = "llm:<model>" in')
+            print("  ~/.snapjudge/guard.toml.")
     print("Check with: snapjudge guard test")
     return 0
 
@@ -57,8 +77,13 @@ def _guard_install(args) -> int:
 def _guard_uninstall(args) -> int:
     from snapjudge.guard.install import settings_path, uninstall
 
-    path = settings_path(args.scope, Path.cwd())
-    print(("Removed from " if uninstall(path) else "Not installed in ") + str(path))
+    for agent in _agents(args):
+        path = settings_path(args.scope, Path.cwd(), agent)
+        print(
+            f"{agent}: "
+            + ("removed from " if uninstall(path, agent) else "not installed in ")
+            + str(path)
+        )
     return 0
 
 
@@ -140,23 +165,58 @@ def _guard_stats(args) -> int:
     return 0
 
 
+def _dashboard(args) -> int:
+    import webbrowser
+
+    from snapjudge.dashboard.server import serve
+    from snapjudge.guard.hook import home
+
+    server = serve(home(), args.port)
+    url = f"http://127.0.0.1:{args.port}/"
+    print(f"snapjudge dashboard on {url} (Ctrl+C to stop); reading {home()}")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="snapjudge")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "eval", help="compare engines on labelled cases (snapjudge eval --help)"
     )
+    dash = sub.add_parser("dashboard", help="local page over the guard log")
+    dash.add_argument("--port", type=int, default=8765)
+    dash.add_argument("--no-browser", action="store_true", help="don't open a browser")
+    dash.set_defaults(func=_dashboard)
     guard = sub.add_parser("guard", help="pre-action guard for coding agents")
     gsub = guard.add_subparsers(dest="guard_command", required=True)
-    gsub.add_parser("hook", help="run as a Claude Code PreToolUse hook").set_defaults(
-        func=_guard_hook
+    hook = gsub.add_parser("hook", help="run as an agent's pre-action hook")
+    hook.add_argument(
+        "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
     )
+    hook.set_defaults(func=_guard_hook)
     for name, func in (("install", _guard_install), ("uninstall", _guard_uninstall)):
         p = gsub.add_parser(name, help=f"{name} the Claude Code hook")
         p.add_argument(
-            "--for", dest="agent", choices=["claude-code"], default="claude-code"
+            "--for",
+            dest="agent",
+            choices=["claude-code", "cursor", "codex", "all"],
+            default="claude-code",
         )
         p.add_argument("--scope", choices=["user", "project"], default="user")
+        if name == "install":
+            p.add_argument(
+                "--detect",
+                action="store_true",
+                help="re-detect the engine even if one is saved",
+            )
         p.set_defaults(func=func)
     t = gsub.add_parser("test", help="run sample commands through the guard")
     t.add_argument("command", nargs="?", help="a command of your own to check")
