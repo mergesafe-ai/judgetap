@@ -21,6 +21,7 @@ from judgetap.errors import JudgetapError
 from judgetap.types import Question
 
 CONFIG_FILE = "judgetap.toml"
+OLD_CONFIG_FILE = "snapjudge.toml"
 
 
 class CascadeExhaustedError(JudgetapError):
@@ -167,6 +168,12 @@ def from_config(path: str | Path | None = None) -> Cascade:
     """
     from judgetap.engines import load
 
+    if (
+        path is None
+        and not Path(CONFIG_FILE).exists()
+        and Path(OLD_CONFIG_FILE).exists()
+    ):
+        path = OLD_CONFIG_FILE  # the pre-rename name, read for one release
     path = Path(path or CONFIG_FILE)
     with path.open("rb") as fh:
         table = tomllib.load(fh).get("cascade")

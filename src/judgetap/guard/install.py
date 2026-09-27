@@ -143,10 +143,10 @@ def detect_engine(probe=None) -> tuple[str | None, str]:
     AgentJev server on its default port. Nothing is downloaded and no key is
     stored: without one of these the guard runs rules only, which fail closed.
     """
-    from judgetap._compat import env
+    from judgetap._compat import env, env_source
 
     if env("ENGINE"):
-        return env("ENGINE"), "from $JUDGETAP_ENGINE"
+        return env("ENGINE"), f"from {env_source('ENGINE')}"
     from judgetap.secrets import get_key
 
     if get_key("TYPESAFE_API_KEY"):  # env or OS keychain

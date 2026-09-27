@@ -31,11 +31,18 @@ def get_key(name: str) -> str | None:
     if keyring is None:
         return None
     try:
-        return (
-            keyring.get_password(SERVICE, name)
-            or keyring.get_password(OLD_SERVICE, name)
-            or None
-        )
+        value = keyring.get_password(SERVICE, name)
+        if value:
+            return value
+        value = keyring.get_password(OLD_SERVICE, name)
+        if value:
+            # Copy a pre-rename key to the new service once, so later lookups
+            # take one keychain read. The old entry is left for the user.
+            try:
+                keyring.set_password(SERVICE, name, value)
+            except Exception:  # noqa: BLE001, S110 -- migration is best effort
+                pass
+        return value or None
     except Exception:  # noqa: BLE001 -- a broken backend means "no key", never a crash
         return None
 

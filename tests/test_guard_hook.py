@@ -452,3 +452,17 @@ def test_old_snapjudge_settings_still_work(tmp_path, monkeypatch):
     ]
     assert cmds == [HOOK_COMMAND]
     assert install(settings) is False
+
+
+def test_legacy_compat_surface(tmp_path, monkeypatch):
+    import judgetap
+    from judgetap.cascade import from_config
+    from judgetap.guard.install import detect_engine
+
+    assert judgetap.SnapjudgeError is judgetap.JudgetapError
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "snapjudge.toml").write_text('[cascade]\norder = ["jev"]\n')
+    assert [e.name for e in from_config().engines] == ["jev"]
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    assert detect_engine(probe=lambda: False) == ("agentjev", "from $SNAPJUDGE_ENGINE")

@@ -19,6 +19,7 @@ from judgetap.errors import (
     InvalidQuestionError,
     JudgetapError,
     NoEngineError,
+    SnapjudgeError,
 )
 from judgetap.types import Decision, Question
 
@@ -36,6 +37,7 @@ __all__ = [
     "NoEngineError",
     "Question",
     "RawAnswer",
+    "SnapjudgeError",
     "abatch",
     "achoice",
     "ascore",

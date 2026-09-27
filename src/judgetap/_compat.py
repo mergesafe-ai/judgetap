@@ -22,3 +22,11 @@ def default_home() -> Path:
     """~/.judgetap, or an existing ~/.snapjudge when the new one isn't there yet."""
     new, old = Path.home() / ".judgetap", Path.home() / ".snapjudge"
     return old if not new.exists() and old.exists() else new
+
+
+def env_source(name: str) -> str | None:
+    """Which variable `env(name)` read: '$JUDGETAP_<name>' or '$SNAPJUDGE_<name>'."""
+    for prefix in (NEW_PREFIX, OLD_PREFIX):
+        if os.environ.get(prefix + name):
+            return f"${prefix}{name}"
+    return None

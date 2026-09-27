@@ -167,3 +167,14 @@ def test_old_keychain_service_is_read(kr):
     assert secrets.get_key("TYPESAFE_API_KEY") == "old"
     kr.store[("judgetap", "TYPESAFE_API_KEY")] = "new"
     assert secrets.get_key("TYPESAFE_API_KEY") == "new"
+
+
+def test_old_keychain_key_is_migrated_once(kr):
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "old"
+    assert secrets.get_key("TYPESAFE_API_KEY") == "old"
+    assert kr.store[("judgetap", "TYPESAFE_API_KEY")] == "old"
+    reads = []
+    real = kr.get_password
+    kr.get_password = lambda s, n: reads.append(s) or real(s, n)
+    secrets.get_key("TYPESAFE_API_KEY")
+    assert reads == ["judgetap"]
