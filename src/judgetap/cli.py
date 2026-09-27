@@ -12,6 +12,12 @@ from collections import Counter
 from pathlib import Path
 
 
+def _guard_stop(args) -> int:
+    from judgetap.guard.stop import run
+
+    return run()
+
+
 def _guard_post(args) -> int:
     from judgetap.guard.loop import run
 
@@ -47,7 +53,7 @@ def _guard_install(args) -> int:
 
     for agent in _agents(args):
         path = settings_path(args.scope, Path.cwd(), agent)
-        added = install(path, agent)
+        added = install(path, agent, with_stop="stop" in (args.with_ or []))
         print(f"{agent}: {'installed' if added else 'already installed'} in {path}")
         if agent == "codex":
             print("  codex: review and trust the new hook with /hooks before it runs.")
@@ -154,7 +160,7 @@ def _guard_stats(args) -> int:
                 r = json.loads(line)
             except ValueError:
                 continue  # a line cut off by a concurrent write
-            if r.get("source") == "library" or r.get("layer") == "loop":
+            if r.get("source") == "library" or r.get("layer") in ("loop", "stop"):
                 continue  # library decisions and loop notes share the log but aren't guarded calls
             total += 1
             outcomes[r["outcome"]] += 1
@@ -285,6 +291,9 @@ def main(argv: list[str] | None = None) -> int:
     gsub.add_parser(
         "post", help="run as Claude Code's PostToolUse hook (loop detection)"
     ).set_defaults(func=_guard_post)
+    gsub.add_parser(
+        "stop", help="run as Claude Code's Stop hook (experimental task-done check)"
+    ).set_defaults(func=_guard_stop)
     for name, func in (("install", _guard_install), ("uninstall", _guard_uninstall)):
         p = gsub.add_parser(name, help=f"{name} the Claude Code hook")
         p.add_argument(
@@ -299,6 +308,13 @@ def main(argv: list[str] | None = None) -> int:
                 "--detect",
                 action="store_true",
                 help="re-detect the engine even if one is saved",
+            )
+            p.add_argument(
+                "--with",
+                dest="with_",
+                action="append",
+                choices=["stop"],
+                help="opt-in extras: 'stop' adds the experimental task-done check (Claude Code)",
             )
         p.set_defaults(func=func)
     t = gsub.add_parser("test", help="run sample commands through the guard")
