@@ -276,10 +276,19 @@ def _recursive(args: list[str]) -> bool:
 
 
 def _find_roots(args: list[str]) -> list[str]:
-    """find's starting points: the words before its first expression token."""
+    """find's starting points: the words after its leading options (-H, -L,
+    -P, -D debugopts, -Olevel) and before its first expression token."""
+    rest = list(args)
+    while rest:
+        if rest[0] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", rest[0]):
+            rest.pop(0)
+        elif rest[0] == "-D":
+            del rest[:2]
+        else:
+            break
     roots = []
-    for arg in args:
-        if arg.startswith(("-", "(", "!")) or arg in ("-H", "-L", "-P"):
+    for arg in rest:
+        if arg.startswith(("-", "(", "!")):
             break
         roots.append(arg)
     return roots
@@ -319,7 +328,10 @@ def current_branch(cwd: Path) -> str | None:
     for directory in (cwd, *cwd.parents):
         git = directory / ".git"
         if git.is_file():  # worktree or submodule: "gitdir: <path>"
-            text = git.read_text(errors="replace").strip()
+            try:
+                text = git.read_text(errors="replace").strip()
+            except OSError:
+                return None
             if not text.startswith("gitdir:"):
                 return None
             git = (directory / text.split(":", 1)[1].strip()).resolve()
@@ -353,12 +365,20 @@ def _push_rule(
             skip = True
         elif not arg.startswith("-"):
             positional.append(arg)
-    refspecs = positional[1:]  # positional[0] is the remote
+    # The remote is the first positional, unless --repo already named it.
+    has_repo = any(a == "--repo" or a.startswith("--repo=") for a in args)
+    refspecs = positional if has_repo else positional[1:]
     if not refspecs:
         refspecs = ["HEAD"]  # plain `git push [remote]` pushes the current branch
     for spec in refspecs:
         dest = spec.lstrip("+").split(":")[-1]
         dest = dest.removeprefix("refs/heads/")
+        if UNRESOLVABLE_NAME.search(dest) or not dest:
+            return (
+                "ask",
+                "push-implicit",
+                f"push destination {spec!r} can't be resolved",
+            )
         if dest == "HEAD":
             dest = branch_of(cwd) if cwd is not None else None
             if dest is None:
@@ -378,6 +398,19 @@ def _push_rule(
                 f"pushes straight to protected branch {dest!r}",
             )
     return None
+
+
+# Words that can destroy or publish something.
+DESTRUCTIVE = re.compile(
+    r"(?<![\w-])(rm|rmdir|find|xargs|dd|mkfs\S*|shred|truncate|mv|git|terraform|kubectl|"
+    r"drop|delete|psql|mysql|sqlite3|aws|gcloud|az|chmod|chown)(?![\w-])",
+    re.IGNORECASE,
+)
+# Shell the rules can't see through: expansions, substitutions, heredocs,
+# eval, and wrappers that rewrite the command or its directory.
+OPAQUE = re.compile(
+    r"[$`]|<\(|>\(|<<|\beval\b|\benv\b[^;&|]*\s(-S|--split-string|-C|--chdir)\b"
+)
 
 
 def check_command(
@@ -419,6 +452,17 @@ def check_command(
     for argv in _commands(command) or []:
         if argv[:2] == ["git", "push"] and (h := _push_rule(argv, push_cwd, branch_of)):
             hits.append(h)
+    if OPAQUE.search(command) and DESTRUCTIVE.search(command):
+        hits.append(
+            (
+                "ask",
+                "opaque-destructive",
+                (
+                    "a destructive command uses shell the rules can't analyse "
+                    "(expansion, substitution, heredoc, eval or env -S/--chdir)"
+                ),
+            )
+        )
     if not hits:
         return None
     return next((h for h in hits if h[0] == "hold"), hits[0])

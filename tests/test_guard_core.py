@@ -140,3 +140,8 @@ def test_multiline_read_only_prefix_is_still_judged():
     engine = judge()
     v = check(act("git status\nmake deploy"), engine)
     assert v.layer == "judge"
+
+
+def test_process_substitution_is_judged():
+    engine = judge()
+    assert check(act("cat <(make deploy)"), engine).layer == "judge"

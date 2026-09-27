@@ -32,7 +32,7 @@ GIT_LISTING = re.compile(
     r"^\s*git\s+(branch(\s+(-a|-r|-v|-vv|--list|--all|--remotes|--show-current))*"
     r"|remote(\s+-v)?|tag(\s+(-l|--list))?)\s*$"
 )
-CHAINING = re.compile(r"[;&|>`\n]|\$\(")
+CHAINING = re.compile(r"[;&|<>`\n]|\$\(")
 
 QUESTIONS = {
     "irreversible": Question.yesno(

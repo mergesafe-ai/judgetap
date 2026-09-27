@@ -7,10 +7,8 @@ permission rules still apply -- the guard only ever tightens them.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -20,7 +18,7 @@ from typing import Any
 from snapjudge.guard.core import Action, Verdict, check, load_user_rules, project_rules
 from snapjudge.guard.rules import redact
 
-MAX_INCREMENT = 4 * 1024 * 1024
+TRANSCRIPT_SCAN_BYTES = 2 * 1024 * 1024
 GUARDED_TOOLS = ("Bash", "Write", "Edit", "MultiEdit")
 
 
@@ -47,50 +45,35 @@ def action_from_hook(payload: dict[str, Any]) -> Action | None:
             action.content = "\n".join(
                 e.get("new_string", "") for e in inp.get("edits", [])
             )
-    action.task = last_user_message(
-        payload.get("transcript_path"), payload.get("session_id")
-    )
+    action.task = last_user_message(payload.get("transcript_path"))
     action.project_rules = project_rules(cwd)
     return action
 
 
-def _complete_size(path: str) -> int:
-    """Bytes up to and including the file's last newline, or the whole file
-    when its unterminated last line is already a complete JSON record."""
+def _lines_backward(path: str, limit: int) -> list[bytes]:
+    """The file's complete lines within its last `limit` bytes, newest first.
+    A line cut by the window's start is dropped; an unterminated last line is
+    kept only if it is already a complete JSON record."""
     with open(path, "rb") as fh:
-        size = pos = fh.seek(0, os.SEEK_END)
-        while pos > 0:
-            step = min(65_536, pos)
-            pos -= step
-            fh.seek(pos)
-            idx = fh.read(step).rfind(b"\n")
-            if idx != -1:
-                pos += idx + 1
-                break
-        fh.seek(pos)
-        tail = fh.read()
+        end = fh.seek(0, os.SEEK_END)
+        start = max(0, end - limit)
+        fh.seek(start)
+        window = fh.read()
+    lines = window.split(b"\n")
+    if start > 0:
+        lines.pop(0)
+    last = lines.pop() if lines else b""
+    if last and _is_json(last):
+        lines.append(last)
+    return lines[::-1]
+
+
+def _is_json(raw: bytes) -> bool:
     try:
-        json.loads(tail)
-        return size
+        json.loads(raw)
     except ValueError:
-        return pos
-
-
-def _lines_backward(path: str, chunk: int = 65_536, end: int | None = None):
-    """Yield a file's lines newest first, reading back from `end` (default
-    EOF) in chunks."""
-    with open(path, "rb") as fh:
-        pos = fh.seek(0, os.SEEK_END) if end is None else end
-        tail = b""
-        while pos > 0:
-            step = min(chunk, pos)
-            pos -= step
-            fh.seek(pos)
-            block = fh.read(step) + tail
-            lines = block.split(b"\n")
-            tail = lines.pop(0)  # may be cut mid-line; finish it next round
-            yield from reversed(lines)
-        yield tail
+        return False
+    return True
 
 
 def _user_text(raw: bytes) -> str | None:
@@ -111,108 +94,17 @@ def _user_text(raw: bytes) -> str | None:
     return None
 
 
-def last_user_message(
-    transcript_path: str | None, session: str | None = None
-) -> str | None:
+def last_user_message(transcript_path: str | None) -> str | None:
     """The newest plain-text user turn in a Claude Code JSONL transcript.
 
-    With a session id, the answer and the byte offset read so far are cached,
-    so each later call reads only what the transcript gained since: total
-    work stays linear in the transcript, however many actions a task takes.
+    Reads back from the end, at most TRANSCRIPT_SCAN_BYTES: a fixed cost per
+    call however long the session, and no cache that could go stale. If the
+    user's last turn is further back than that, the task is reported unknown.
     """
     if not transcript_path or not Path(transcript_path).is_file():
         return None
-    cache = _cache_path(session)
-    cached = _read_cache(cache, transcript_path)
-    if cached is None:
-        # Stop at the last newline: a half-written final record is read next time.
-        offset = _complete_size(transcript_path)
-        lines = _lines_backward(transcript_path, end=offset)
-        task = next(filter(None, map(_user_text, lines)), None)
-    else:
-        task, offset = cached["task"], cached["offset"]
-        with open(transcript_path, "rb") as fh:
-            fh.seek(offset)
-            new = fh.read(MAX_INCREMENT + 1)
-        if len(new) > MAX_INCREMENT:
-            # Far behind: rescanning backward from the end is cheaper.
-            offset = _complete_size(transcript_path)
-            task = next(
-                filter(
-                    None, map(_user_text, _lines_backward(transcript_path, end=offset))
-                ),
-                task,
-            )
-            _write_cache(cache, transcript_path, task, offset)
-            return task
-        complete, _, _ = new.rpartition(
-            b"\n"
-        )  # leave a half-written line for next time
-        for line in complete.split(b"\n") if complete else []:
-            task = _user_text(line) or task
-        offset += len(complete) + (1 if complete else 0)
-    _write_cache(cache, transcript_path, task, offset)
-    return task
-
-
-def _cache_path(session: str | None) -> Path | None:
-    if not session or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session):
-        return None
-    return home() / "sessions" / f"{session}.json"
-
-
-def _read_cache(cache: Path | None, transcript_path: str) -> dict | None:
-    if cache is None or not cache.is_file():
-        return None
-    try:
-        data = json.loads(cache.read_text())
-    except (OSError, ValueError):
-        return None
-    size = Path(transcript_path).stat().st_size
-    # A different, replaced or truncated transcript invalidates the cache;
-    # so does a rewrite in place, caught by fingerprinting the bytes read.
-    inode = Path(transcript_path).stat().st_ino
-    if (
-        data.get("path") != transcript_path
-        or data.get("inode") != inode
-        or not 0 <= data.get("offset", -1) <= size
-        or data.get("fingerprint") != _fingerprint(transcript_path, data["offset"])
-    ):
-        return None
-    return data
-
-
-def _fingerprint(path: str, offset: int) -> str:
-    """Hash of the first and last 4 KB before offset: cheap, and any rewrite
-    of the prefix we already read changes it in practice."""
-    with open(path, "rb") as fh:
-        head = fh.read(min(4096, offset))
-        fh.seek(max(0, offset - 4096))
-        tail = fh.read(min(4096, offset))
-    return hashlib.sha256(head + b"|" + tail).hexdigest()
-
-
-def _write_cache(
-    cache: Path | None, transcript_path: str, task: str | None, offset: int
-) -> None:
-    if cache is None:
-        return
-    try:
-        cache.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        tmp = cache.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            record = {
-                "path": transcript_path,
-                "inode": Path(transcript_path).stat().st_ino,
-                "offset": offset,
-                "fingerprint": _fingerprint(transcript_path, offset),
-                "task": task,
-            }
-            json.dump(record, fh)
-        os.replace(tmp, cache)  # atomic: a concurrent hook never reads half a file
-    except OSError:
-        pass
+    lines = _lines_backward(transcript_path, TRANSCRIPT_SCAN_BYTES)
+    return next(filter(None, map(_user_text, lines)), None)
 
 
 def _engine():

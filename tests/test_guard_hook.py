@@ -153,18 +153,6 @@ def test_logged_command_is_redacted_and_file_is_private(tmp_path):
     assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
 
 
-def test_transcript_read_from_the_end(tmp_path, monkeypatch):
-    t = tmp_path / "t.jsonl"
-    old = json.dumps({"type": "user", "message": {"content": "old"}})
-    new = json.dumps({"type": "user", "message": {"content": "newest ask"}})
-    t.write_text("\n".join([old] * 5000 + [new, json.dumps({"type": "assistant"})]))
-    seen = []
-    real = json.loads
-    monkeypatch.setattr(hook.json, "loads", lambda s: seen.append(1) or real(s))
-    assert hook.last_user_message(str(t)) == "newest ask"
-    assert len(seen) <= 3
-
-
 def test_malformed_user_config_still_runs_builtins(tmp_path):
     (tmp_path / "guard.toml").write_text("[[rule]\nbroken")
     out = run(bash("git push --force", tmp_path))
@@ -199,55 +187,6 @@ def test_cli_install_and_uninstall(tmp_path, monkeypatch, capsys):
     assert HOOK_COMMAND in (tmp_path / ".claude" / "settings.json").read_text()
     main(["guard", "uninstall", "--scope", "project"])
     assert HOOK_COMMAND not in (tmp_path / ".claude" / "settings.json").read_text()
-
-
-def test_transcript_cache_reads_only_new_bytes(tmp_path, monkeypatch):
-    t = tmp_path / "t.jsonl"
-    user = lambda text: json.dumps({"type": "user", "message": {"content": text}})
-    tool = json.dumps({"type": "assistant", "message": {"content": "x" * 50}})
-    t.write_text(user("first task") + "\n" + tool + "\n")
-    assert hook.last_user_message(str(t), "s1") == "first task"
-
-    parsed = []
-    real = hook._user_text
-    monkeypatch.setattr(hook, "_user_text", lambda raw: parsed.append(raw) or real(raw))
-    with t.open("a") as fh:
-        fh.write(tool + "\n" + tool + "\n")
-    assert hook.last_user_message(str(t), "s1") == "first task"
-    assert len(parsed) == 2  # only the two new lines
-    with t.open("a") as fh:
-        fh.write(
-            user("second task") + "\n" + '{"type": "user", "mess'
-        )  # half-written line
-    assert hook.last_user_message(str(t), "s1") == "second task"
-
-
-def test_transcript_cache_invalidated_by_truncation(tmp_path):
-    t = tmp_path / "t.jsonl"
-    t.write_text(
-        json.dumps({"type": "user", "message": {"content": "long " * 100}}) + "\n"
-    )
-    hook.last_user_message(str(t), "s2")
-    t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
-    assert hook.last_user_message(str(t), "s2") == "new"
-
-
-def test_unsafe_session_ids_are_not_cached(tmp_path):
-    t = tmp_path / "t.jsonl"
-    t.write_text(json.dumps({"type": "user", "message": {"content": "x"}}) + "\n")
-    assert hook.last_user_message(str(t), "../../etc/evil") == "x"
-    assert not (tmp_path / "etc").exists()
-
-
-def test_partial_user_record_on_first_read_is_picked_up_later(tmp_path):
-    t = tmp_path / "t.jsonl"
-    done = json.dumps({"type": "user", "message": {"content": "old task"}})
-    partial = json.dumps({"type": "user", "message": {"content": "new task"}})
-    t.write_text(done + "\n" + partial[:20])
-    assert hook.last_user_message(str(t), "s3") == "old task"
-    with t.open("a") as fh:
-        fh.write(partial[20:] + "\n")
-    assert hook.last_user_message(str(t), "s3") == "new task"
 
 
 def test_uninstall_keeps_other_hooks_in_the_same_group(tmp_path):
@@ -285,32 +224,6 @@ def test_stats_nearest_rank_percentiles(tmp_path, capsys):
     assert "p50 30 ms, p95 1000 ms" in capsys.readouterr().out
 
 
-def test_replaced_transcript_invalidates_cache(tmp_path):
-    t = tmp_path / "t.jsonl"
-    t.write_text(json.dumps({"type": "user", "message": {"content": "a"}}) + "\n")
-    hook.last_user_message(str(t), "s4")
-    replacement = tmp_path / "new.jsonl"
-    replacement.write_text(
-        json.dumps({"type": "user", "message": {"content": "b" * 200}}) + "\n"
-    )
-    replacement.replace(t)  # same path, larger, new inode
-    assert hook.last_user_message(str(t), "s4") == "b" * 200
-
-
-def test_in_place_rewrite_invalidates_cache(tmp_path):
-    t = tmp_path / "t.jsonl"
-    t.write_text(
-        json.dumps({"type": "user", "message": {"content": "old " * 50}}) + "\n"
-    )
-    hook.last_user_message(str(t), "s5")
-    with t.open("r+") as fh:  # same inode, same or larger size, different bytes
-        fh.seek(0)
-        fh.write(
-            json.dumps({"type": "user", "message": {"content": "new " * 60}}) + "\n"
-        )
-    assert hook.last_user_message(str(t), "s5") == ("new " * 60)
-
-
 def test_stats_skips_a_cut_off_line(tmp_path, capsys):
     from snapjudge.cli import main
 
@@ -330,3 +243,22 @@ def test_stats_skips_a_cut_off_line(tmp_path, capsys):
     )
     assert main(["guard", "stats"]) == 0
     assert "1 guarded calls" in capsys.readouterr().out
+
+
+def test_transcript_scan_is_bounded_and_skips_partial_tail(tmp_path, monkeypatch):
+    monkeypatch.setattr(hook, "TRANSCRIPT_SCAN_BYTES", 4096)
+    t = tmp_path / "t.jsonl"
+    user = lambda text: json.dumps({"type": "user", "message": {"content": text}})
+    filler = json.dumps({"type": "assistant", "message": {"content": "x" * 100}})
+    t.write_text(user("recent") + "\n" + filler + "\n" + user("half")[:15])
+    assert hook.last_user_message(str(t)) == "recent"  # partial tail skipped
+    t.write_text(user("far back") + "\n" + (filler + "\n") * 200)
+    assert hook.last_user_message(str(t)) is None  # beyond the scan window
+
+
+def test_transcript_rewrite_is_seen_immediately(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "old"}}) + "\n")
+    assert hook.last_user_message(str(t)) == "old"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
+    assert hook.last_user_message(str(t)) == "new"

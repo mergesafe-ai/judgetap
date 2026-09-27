@@ -287,3 +287,44 @@ def test_git_dash_c_reads_that_repos_branch():
     assert hit[:2] == ("hold", "push-protected") and seen == [Path("/other/repo")]
     hit = check_command("git -C $REPO push", WS, branch_of=branch_of)
     assert hit[:2] == ("ask", "push-implicit")
+
+
+@pytest.mark.parametrize(
+    ("command", "outcome"),
+    [
+        ("find -L / -delete", "hold"),
+        ("find -D tree -O2 /etc -delete", "hold"),
+        ('git push origin "$DEST"', "ask"),
+        ("env --chdir /tmp rm -rf cache", "ask"),
+        ("env -S 'rm -rf /'", "ask"),
+        ("cat <<EOF | sh\nrm -rf /\nEOF", "hold"),
+        ('rm -rf "${TARGET:-/}"', "hold"),
+    ],
+)
+def test_round7_forms_fail_closed(command, outcome):
+    hit = check_command(command, WS, branch_of=on_branch("feat"))
+    assert hit is not None and hit[0] == outcome
+
+
+def test_opaque_but_harmless_is_not_flagged():
+    assert check_command('echo "$HOME"', WS) is None
+
+
+def test_unreadable_git_file_is_unknown_branch(tmp_path):
+    from snapjudge.guard.rules import current_branch
+
+    gitfile = tmp_path / ".git"
+    gitfile.write_text("gitdir: /nowhere")
+    gitfile.chmod(0)
+    try:
+        assert current_branch(tmp_path) is None
+    finally:
+        gitfile.chmod(0o600)
+
+
+@pytest.mark.parametrize(
+    "command", ["git push --repo origin main", "git push --repo=origin main"]
+)
+def test_repo_option_does_not_hide_the_refspec(command):
+    hit = check_command(command, WS, branch_of=on_branch("feat"))
+    assert hit[:2] == ("hold", "push-protected")
