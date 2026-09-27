@@ -12,6 +12,7 @@ import os
 import shlex
 import sys
 import time
+import tomllib
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -109,13 +110,38 @@ def last_user_message(transcript_path: str | None) -> str | None:
     return next(filter(None, map(_user_text, lines)), None)
 
 
+def engine_spec() -> str | None:
+    """$SNAPJUDGE_ENGINE, else `engine` in ~/.snapjudge/guard.toml.
+
+    The file matters because agents often run hooks without the user's
+    shell environment, so an exported variable may never reach the hook.
+    """
+    return os.environ.get("SNAPJUDGE_ENGINE") or saved_engine()
+
+
+def saved_engine() -> str | None:
+    """`engine` from ~/.snapjudge/guard.toml only, ignoring the environment."""
+    path = home() / "guard.toml"
+    if not path.is_file():
+        return None
+    with path.open("rb") as fh:
+        value = tomllib.load(fh).get("engine")
+    return value if isinstance(value, str) and value else None
+
+
 def _engine():
-    spec = os.environ.get("SNAPJUDGE_ENGINE")
+    spec = engine_spec()
     if not spec:
         return None
     from snapjudge.engines import load
 
-    return load(spec)
+    engine = load(spec)
+    if spec.partition(":")[0] == "jev" and not os.environ.get("TYPESAFE_API_KEY"):
+        # Caught by the caller: the guard then runs rules only, failing closed.
+        raise RuntimeError(
+            "engine is jev but TYPESAFE_API_KEY isn't visible to the hook"
+        )
+    return engine
 
 
 def log(action: Action, verdict: Verdict, session: str | None) -> None:

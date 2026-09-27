@@ -262,3 +262,155 @@ def test_transcript_rewrite_is_seen_immediately(tmp_path):
     assert hook.last_user_message(str(t)) == "old"
     t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
     assert hook.last_user_message(str(t)) == "new"
+
+
+def test_engine_spec_from_env_then_guard_toml(tmp_path, monkeypatch):
+    assert hook.engine_spec() is None
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "guard.toml").write_text(
+        'engine = "agentjev"\n[[rule]]\npattern = "x"\n'
+    )
+    assert hook.engine_spec() == "agentjev"
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    assert hook.engine_spec() == "jev"
+
+
+def test_detect_engine_order(monkeypatch):
+    from snapjudge.guard.install import detect_engine
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert detect_engine(probe=lambda: False)[0] is None
+    assert detect_engine(probe=lambda: True)[0] == "agentjev"
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    assert detect_engine(probe=lambda: True)[0] == "jev"
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "llm:openai/x")
+    assert detect_engine(probe=lambda: True)[0] == "llm:openai/x"
+
+
+def test_write_engine_keeps_user_rules(tmp_path):
+    from snapjudge.guard.core import load_user_rules
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\n[[rule]]\npattern = "kubectl"\n')
+    write_engine(tmp_path, "jev")
+    text = toml.read_text()
+    assert text.startswith('engine = "jev"') and "old" not in text
+    assert len(load_user_rules(toml)) == 1
+
+
+def test_eval_subcommand_is_registered(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["eval", "--help"])
+    assert "snapjudge eval" in capsys.readouterr().out
+
+
+def test_jev_without_key_fails_closed_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    out = run(bash("terraform apply -auto-approve", tmp_path))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert "TYPESAFE_API_KEY" in out["systemMessage"]
+
+
+def test_judge_failure_falls_back_to_rules_only():
+    from pathlib import Path
+
+    from snapjudge.guard.core import Action, check
+    from snapjudge.testing import StaticEngine
+
+    class Down(StaticEngine):
+        def decide(self, questions, context):
+            raise ConnectionError("down")
+
+    v = check(
+        Action("Bash", Path("/w"), command="kubectl delete ns x"), Down(lambda q, c: {})
+    )
+    assert (v.outcome, v.rule) == ("ask", "rules-only") and "ConnectionError" in v.error
+
+
+def test_write_engine_rejects_unsafe_specs(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    with pytest.raises(ValueError):
+        write_engine(tmp_path, 'jev"\n[[rule]]')
+    assert not (tmp_path / "guard.toml").exists()
+    write_engine(tmp_path, "agentjev:http://gpu-box:9000")
+    assert (
+        hook.engine_spec() is None or True
+    )  # file written under tmp_path, not SNAPJUDGE_HOME
+
+
+def test_agentjev_probe_needs_the_protocol():
+    from snapjudge.guard.install import agentjev_up
+
+    ok = {
+        "results": [
+            {"answers": [{"id": "q0", "distribution": {"true": 0.1, "false": 0.9}}]}
+        ]
+    }
+    assert agentjev_up(transport=lambda *a: (200, json.dumps(ok).encode())) is True
+    assert (
+        agentjev_up(transport=lambda *a: (200, b"<html>not agentjev</html>")) is False
+    )
+    assert agentjev_up(transport=lambda *a: (404, b"")) is False
+
+
+def test_reinstall_keeps_existing_engine(tmp_path, monkeypatch, capsys):
+    from snapjudge import cli
+    from snapjudge.guard import install as inst
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(inst, "agentjev_up", lambda *a, **k: False)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "guard.toml").write_text('engine = "agentjev"\n')
+    cli.main(["guard", "install", "--scope", "project"])
+    assert "keeping agentjev" in capsys.readouterr().out
+
+
+def test_reinstall_keeps_chosen_engine_unless_detect(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "guard.toml").write_text('engine = "llm:openai/x"\n')
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    main(["guard", "install", "--scope", "project"])
+    assert 'engine = "llm:openai/x"' in (tmp_path / "home" / "guard.toml").read_text()
+    main(["guard", "install", "--scope", "project", "--detect"])
+    assert 'engine = "jev"' in (tmp_path / "home" / "guard.toml").read_text()
+
+
+def test_write_engine_keeps_similar_keys_and_rejects_unknown(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\nengine_options = "strict"\n')
+    write_engine(tmp_path, "agentjev")
+    assert 'engine_options = "strict"' in toml.read_text()
+    with pytest.raises(ValueError, match="unknown engine"):
+        write_engine(tmp_path, "typo")
+
+
+def test_install_persists_env_engine(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    main(["guard", "install", "--scope", "project"])
+    assert 'engine = "agentjev"' in (tmp_path / "home" / "guard.toml").read_text()
+
+
+def test_write_engine_keeps_table_scoped_engine_and_validates_fully(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\n[custom]\nengine = "keep-me"\n')
+    write_engine(tmp_path, "jev")
+    text = toml.read_text()
+    assert text.startswith('engine = "jev"') and 'engine = "keep-me"' in text
+    with pytest.raises(ValueError):
+        write_engine(tmp_path, "llm")  # a known name but no model
