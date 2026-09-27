@@ -65,7 +65,10 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
                 return self._json(403, {"error": "bad token"})
             if self.path != "/api/false-alarm":
                 return self._json(404, {"error": "not found"})
-            length = int(self.headers.get("Content-Length") or 0)
+            raw_length = self.headers.get("Content-Length") or "0"
+            if not raw_length.isdigit():
+                return self._json(400, {"error": "bad content-length"})
+            length = int(raw_length)
             if length > MAX_BODY:
                 return self._json(413, {"error": "too large"})
             try:
