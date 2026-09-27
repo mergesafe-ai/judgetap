@@ -181,3 +181,34 @@ def test_task_and_reply_read_the_transcript_once(tmp_path, monkeypatch):
     monkeypatch.setattr(hook, "_lines_backward", lambda *a: reads.append(1) or real(*a))
     assert stop.task_and_reply(str(t)) == ("add a test", "Added it.")
     assert len(reads) == 1
+
+
+def test_failed_judge_logs_its_calls_and_lets_the_agent_stop(tmp_path, monkeypatch):
+    import json
+
+    import judgetap as jt
+    from judgetap.dashboard.data import load
+    from judgetap.guard import stop
+    from judgetap.testing import StaticEngine
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user", "message": {"content": "do x"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "tried x"}]},
+            }
+        )
+        + "\n"
+    )
+    low = StaticEngine(lambda q, c: {"yes": 0.5, "no": 0.5}, name="low")
+    assert (
+        stop.handle(
+            {"session_id": "s9", "transcript_path": str(t)}, engine=jt.Cascade([low])
+        )
+        is None
+    )
+    assert load(tmp_path)["summary"]["engines"]["low"]["calls"] == 1
