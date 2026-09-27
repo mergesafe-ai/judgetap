@@ -22,7 +22,7 @@ from snapjudge.errors import (
 )
 from snapjudge.types import Decision, Question
 
-__version__ = "0.0.1"  # x-release-please-version
+__version__ = "0.1.0"  # x-release-please-version
 
 __all__ = [
     "Cascade",
