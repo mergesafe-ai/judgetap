@@ -595,3 +595,16 @@ def test_colon_operands_outside_http_clients_are_kept():
     from snapjudge.guard.rules import redact
 
     assert redact("sort -u 'file:with-colon'") == "sort -u 'file:with-colon'"
+
+
+def test_tab_after_user_flag_is_redacted():
+    from snapjudge.guard.rules import redact
+
+    assert "secret" not in redact("curl -u\tbob:secret https://x")
+
+
+def test_only_http_client_segments_are_scanned():
+    from snapjudge.guard.rules import redact
+
+    out = redact("curl -u bob:pw https://x; sort -u file:x")
+    assert "pw" not in out and out.endswith("sort -u file:x")

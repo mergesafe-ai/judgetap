@@ -677,8 +677,12 @@ def _shell_word_end(text: str, i: int) -> int:
 def _redact_basic_auth(text: str) -> str:
     """Mask the whole argument of -u/--user, but only in HTTP clients:
     `sort -u file:x` keeps its argument."""
-    if not AUTH_PROGRAMS.search(text):
-        return text
+    # Scan segment by segment: `curl ...; sort -u file:x` leaves sort alone.
+    parts = re.split(r"(;|&&|\|\||\||\n)", text)
+    return "".join(_redact_segment(p) if AUTH_PROGRAMS.search(p) else p for p in parts)
+
+
+def _redact_segment(text: str) -> str:
     out, pos = [], 0
     for m in USER_FLAG.finditer(text):
         if m.start() < pos:
@@ -686,7 +690,7 @@ def _redact_basic_auth(text: str) -> str:
         start = m.end()
         if start < len(text) and text[start] == "=":
             start += 1
-        while start < len(text) and text[start] == " ":
+        while start < len(text) and text[start] in " \t":
             start += 1
         end = _shell_word_end(text, start)
         if end > start:
