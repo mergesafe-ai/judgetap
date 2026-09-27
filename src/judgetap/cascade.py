@@ -41,6 +41,23 @@ class Attempt:
     answer: RawAnswer | None = None  # validated; None when the engine failed
     p: float | None = None
     error: Exception | None = None
+    # For a nested cascade that gave up on this question: what it spent and
+    # which engines it consulted, so the outer cascade keeps both.
+    cost_usd: float | None = None
+    hops: tuple[str, ...] = ()
+
+
+@dataclass
+class QuestionFailed:
+    """A nested cascade's answer slot for a question it couldn't resolve.
+
+    Only exchanged between cascades (via `decide_partial`): the rest of the
+    batch keeps its answers instead of the whole batch failing."""
+
+    error: Exception
+    cost_usd: float | None = None
+    hops: tuple[str, ...] = ()
+    calls: tuple[Call, ...] = ()
 
 
 Fallback = Callable[[Question, Sequence[Attempt]], Mapping[str, float]]
@@ -63,61 +80,87 @@ class Cascade:
     def decide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
-        attempts: list[list[Attempt]] = [[] for _ in questions]
-        calls: list[Call] = []
-        for engine in self.engines:
-            pending = self._pending(questions, attempts)
-            if not pending:
-                break
-            start = time.perf_counter()
-            try:
-                answers = engine.decide([questions[i] for i in pending], context)
-            except Exception as err:  # noqa: BLE001 -- any engine failure falls through
-                answers = err
-            calls.extend(
-                _calls_of(engine, answers, start, [questions[i] for i in pending])
-            )
-            self._record(engine, questions, pending, answers, attempts)
-        return self._results(questions, attempts, tuple(calls))
+        return _raise_first_failure(self.decide_partial(questions, context))
 
     async def adecide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
+        return _raise_first_failure(await self.adecide_partial(questions, context))
+
+    def decide_partial(
+        self, questions: Sequence[Question], context: Context
+    ) -> list[RawAnswer | QuestionFailed]:
+        """Like decide, but a question no engine resolved comes back as a
+        QuestionFailed instead of failing the whole batch."""
         attempts: list[list[Attempt]] = [[] for _ in questions]
         calls: list[Call] = []
         for engine in self.engines:
             pending = self._pending(questions, attempts)
             if not pending:
                 break
+            asked = [questions[i] for i in pending]
             start = time.perf_counter()
             try:
-                answers = await engine.adecide([questions[i] for i in pending], context)
+                if isinstance(engine, Cascade):
+                    answers = engine.decide_partial(asked, context)
+                else:
+                    answers = engine.decide(asked, context)
+            except Exception as err:  # noqa: BLE001 -- any engine failure falls through
+                answers = err
+            calls.extend(_calls_of(engine, answers, start, asked))
+            self._record(engine, questions, pending, answers, attempts)
+        return self._results(questions, attempts, tuple(calls))
+
+    async def adecide_partial(
+        self, questions: Sequence[Question], context: Context
+    ) -> list[RawAnswer | QuestionFailed]:
+        attempts: list[list[Attempt]] = [[] for _ in questions]
+        calls: list[Call] = []
+        for engine in self.engines:
+            pending = self._pending(questions, attempts)
+            if not pending:
+                break
+            asked = [questions[i] for i in pending]
+            start = time.perf_counter()
+            try:
+                if isinstance(engine, Cascade):
+                    answers = await engine.adecide_partial(asked, context)
+                else:
+                    answers = await engine.adecide(asked, context)
             except asyncio.CancelledError:
                 raise
             except Exception as err:  # noqa: BLE001 -- any engine failure falls through
                 answers = err
-            calls.extend(
-                _calls_of(engine, answers, start, [questions[i] for i in pending])
-            )
+            calls.extend(_calls_of(engine, answers, start, asked))
             self._record(engine, questions, pending, answers, attempts)
         return self._results(questions, attempts, tuple(calls))
 
-    def _results(self, questions, attempts, calls: tuple[Call, ...]) -> list[RawAnswer]:
-        """Finish every question; every answer (or the exhaustion error)
+    def _results(
+        self, questions, attempts, calls: tuple[Call, ...]
+    ) -> list[RawAnswer | QuestionFailed]:
+        """Finish every question; every answer, failure slot, or raised error
         carries the calls this batch made."""
-        results = []
+        results: list[RawAnswer | QuestionFailed] = []
         for q, a in zip(questions, attempts, strict=True):
             try:
                 results.append(self._finish(q, a))
+            except CascadeExhaustedError as err:
+                results.append(
+                    QuestionFailed(err, cost_usd=_spent(a), hops=_hops(a), calls=calls)
+                )
             except Exception as err:
-                # Exhaustion, or an on_exhausted callback that raised: either
-                # way the providers' calls travel with the error.
-                try:
-                    err.calls = calls
-                except AttributeError:
-                    pass  # an exception type that refuses attributes
+                # An on_exhausted callback that raised or returned garbage:
+                # the providers' calls travel with the error.
+                _attach_calls(err, calls)
                 raise
-        return [replace(r, calls=calls) for r in results]
+        out: list[RawAnswer | QuestionFailed] = []
+        for r in results:
+            if isinstance(r, QuestionFailed):
+                _attach_calls(r.error, calls)
+                out.append(r)
+            else:
+                out.append(replace(r, calls=calls))
+        return out
 
     def _pending(self, questions, attempts) -> list[int]:
         return [i for i in range(len(questions)) if not self._confident(attempts[i])]
@@ -143,6 +186,17 @@ class Cascade:
                 attempts[i].append(Attempt(engine.name, error=err))
             return
         for i, raw in zip(pending, answers, strict=True):
+            if isinstance(raw, QuestionFailed):
+                # A nested cascade gave up on this one question only.
+                attempts[i].append(
+                    Attempt(
+                        engine.name,
+                        error=raw.error,
+                        cost_usd=raw.cost_usd,
+                        hops=raw.hops,
+                    )
+                )
+                continue
             try:
                 dist = validate_answer(questions[i], raw, engine.name)
             except Exception as err:  # noqa: BLE001 -- including TypeError from a bad RawAnswer
@@ -154,16 +208,19 @@ class Cascade:
     def _finish(self, question: Question, attempts: Sequence[Attempt]) -> RawAnswer:
         hops = _hops(attempts)
         answered = [a for a in attempts if a.answer is not None]
-        costs = [a.answer.cost_usd for a in answered]
-        # Everything paid for, not just the winner; unknown if any part is unknown.
-        spent = sum(costs) if costs and None not in costs else None
+        spent = _spent(attempts)
         if self._confident(attempts):
             return _as_result(attempts[-1], hops, spent)
         if callable(self.on_exhausted):
-            dist = self.on_exhausted(question, attempts)
-            return RawAnswer(
-                dict(dist), cost_usd=spent, engine="fallback", hops=(*hops, "fallback")
+            raw = RawAnswer(
+                dict(self.on_exhausted(question, attempts)),
+                cost_usd=spent,
+                engine="fallback",
+                hops=(*hops, "fallback"),
             )
+            # Checked here so a bad callback result fails with the calls made.
+            validate_answer(question, raw, "on_exhausted callback")
+            return raw
         if self.on_exhausted == "return_last" and answered:
             return _as_result(answered[-1], hops, spent)
         errors = "; ".join(f"{a.engine}: {a.error or f'p={a.p:.2f}'}" for a in attempts)
@@ -203,9 +260,36 @@ def _hops(attempts: Sequence[Attempt]) -> tuple[str, ...]:
     """Every engine consulted, expanding a nested cascade's own path."""
     hops: list[str] = []
     for a in attempts:
-        inner = a.answer.hops if a.answer is not None else ()
+        inner = a.answer.hops if a.answer is not None else a.hops
         hops.extend(inner or (a.engine,))
     return tuple(hops)
+
+
+def _spent(attempts: Sequence[Attempt]) -> float | None:
+    """Everything paid for on a question, not just the winner (including what
+    a nested cascade spent before giving up); None if any part is unknown."""
+    costs = [a.answer.cost_usd for a in attempts if a.answer is not None]
+    # A nested cascade's spend on a question it gave up on; when it paid for
+    # nothing (every engine errored) there is nothing to add.
+    costs += [
+        a.cost_usd for a in attempts if a.answer is None and a.cost_usd is not None
+    ]
+    return sum(costs) if costs and None not in costs else None
+
+
+def _attach_calls(err: Exception, calls: tuple[Call, ...]) -> None:
+    try:
+        err.calls = calls
+    except AttributeError:
+        pass  # an exception type that refuses attributes
+
+
+def _raise_first_failure(results: list[RawAnswer | QuestionFailed]) -> list[RawAnswer]:
+    """A top-level cascade keeps its contract: any unresolved question raises."""
+    for r in results:
+        if isinstance(r, QuestionFailed):
+            raise r.error
+    return results
 
 
 def _as_result(
