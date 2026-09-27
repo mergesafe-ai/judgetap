@@ -363,22 +363,54 @@ def upstream_branch(cwd: Path, branch: str) -> str | None:
 
 
 def _global_configs() -> list[Path]:
+    """Existing system, XDG and global config files, lowest precedence first."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     candidates = [
-        os.environ.get("GIT_CONFIG_GLOBAL") or str(Path.home() / ".gitconfig"),
-        str(Path(xdg) / "git" / "config"),
         os.environ.get("GIT_CONFIG_SYSTEM") or "/etc/gitconfig",
+        str(Path(xdg) / "git" / "config"),
+        os.environ.get("GIT_CONFIG_GLOBAL") or str(Path.home() / ".gitconfig"),
     ]
     return [Path(c) for c in candidates if Path(c).is_file()]
 
 
 def _custom_push_config(cwd: Path) -> bool:
-    """True when .git/config sets anything that changes where a plain push
-    goes beyond current/upstream: remote push refspecs, pushRemote, or a
-    push.default other than simple/current/upstream."""
+    """True when git config sets anything that changes where a plain push
+    goes beyond current/upstream: remote push refspecs, pushRemote, or an
+    effective push.default other than simple/current/upstream.
+
+    Scopes are read lowest precedence first (system, XDG, global, repo) and
+    every [push] section is scanned, so the last `default` wins as in git.
+    """
     dirs = _git_dirs(cwd)
     if dirs is None:
         return False
+    texts = []
+    for path in _global_configs():
+        try:
+            texts.append(path.read_text(errors="replace"))
+        except OSError:
+            continue
+    try:
+        texts.append((dirs[1] / "config").read_text(errors="replace"))
+    except OSError:
+        return True  # can't read it: assume the worst
+    config = "\n".join(texts)
+    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
+        return True
+    effective = None
+    for section in re.finditer(
+        r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL
+    ):
+        for mode in re.finditer(
+            r"^\s*default\s*=\s*(\S+)", section.group(1), re.MULTILINE | re.IGNORECASE
+        ):
+            effective = mode.group(1).lower()
+    return effective is not None and effective not in (
+        "simple",
+        "current",
+        "upstream",
+        "tracking",
+    )
     try:
         config = (dirs[1] / "config").read_text(errors="replace")
     except OSError:

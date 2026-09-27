@@ -436,3 +436,20 @@ def test_global_push_default_is_honoured(tmp_path, monkeypatch):
     assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
     glob.write_text("[push]\n\tdefault = simple\n")
     assert check_command("git push", repo) is None
+
+
+def test_effective_push_default_across_scopes(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    glob = tmp_path / "gitconfig"
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "none"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # Repo [push] without a default must not hide the global one.
+    (repo / ".git" / "config").write_text("[push]\n\tautoSetupRemote = true\n")
+    glob.write_text("[push]\n\tdefault = matching\n")
+    assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
+    # A repo value overrides the global one.
+    (repo / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
+    assert check_command("git push", repo) is None
