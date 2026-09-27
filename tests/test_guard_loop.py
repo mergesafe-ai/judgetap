@@ -197,3 +197,31 @@ def test_loop_notes_are_not_guarded_calls(tmp_path, monkeypatch, capsys):
     assert "1 guarded calls" in capsys.readouterr().out
     s = load(tmp_path)["summary"]
     assert s["total"] == 1 and s["loop_notes"] == 1
+
+
+def test_concurrent_hooks_do_not_lose_actions(tmp_path, monkeypatch):
+    import threading
+
+    from judgetap.guard import loop
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    payload = {
+        "session_id": "race",
+        "tool_name": "Bash",
+        "tool_input": {"command": "make build"},
+        "tool_response": {"exit_code": 2, "stderr": "missing target"},
+    }
+    real_load = loop._load
+
+    def slow_load(path):
+        data = real_load(path)
+        threading.Event().wait(0.02)  # widen the read-modify-write window
+        return data
+
+    monkeypatch.setattr(loop, "_load", slow_load)
+    threads = [threading.Thread(target=loop.handle, args=(payload,)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(real_load(tmp_path / "sessions" / "race.json")) == 6

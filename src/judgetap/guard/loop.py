@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,24 @@ def _state_path(session: str | None) -> Path | None:
     return _home() / "sessions" / f"{session}.json"
 
 
+@contextmanager
+def _session_lock(path: Path):
+    """An exclusive lock on <session>.lock (POSIX flock). Where flock isn't
+    available (Windows), updates run unlocked: a missed note, never a crash."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path.with_suffix(".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        yield
+    finally:
+        os.close(fd)  # closing releases the lock
+
+
 def _load(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(path.read_text())
@@ -149,17 +168,20 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
     if act is None or path is None:
         return None
     # Only a hash and the (redacted) action are stored: never file contents.
-    actions = _load(path)
-    # Identity is a hash of the full action (so long commands that differ
-    # late don't collide); the redacted, truncated text is only for display.
-    actions.append(
-        {
-            "key": hashlib.sha256(act.encode()).hexdigest()[:16],
-            "act": redact(act)[:500],
-            "err": failure(payload),
-        }
-    )
-    _save(path, actions)
+    # Hooks for one session can finish together: serialise the
+    # read-append-write so no action is lost.
+    with _session_lock(path):
+        actions = _load(path)
+        # Identity is a hash of the full action (so long commands that differ
+        # late don't collide); the redacted, truncated text is only for display.
+        actions.append(
+            {
+                "key": hashlib.sha256(act.encode()).hexdigest()[:16],
+                "act": redact(act)[:500],
+                "err": failure(payload),
+            }
+        )
+        _save(path, actions)
     count = detect(actions)
     if not count:
         return None
