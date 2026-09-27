@@ -339,7 +339,7 @@ PUSH_VALUE_FLAGS = frozenset(
 
 
 def _push_rule(
-    argv: list[str], cwd: Path, branch_of: Callable[[Path], str | None]
+    argv: list[str], cwd: Path | None, branch_of: Callable[[Path], str | None]
 ) -> tuple[Outcome, str, str] | None:
     """Judge one `git push` by its destination refs, not by words in it."""
     args = argv[2:]
@@ -360,7 +360,7 @@ def _push_rule(
         dest = spec.lstrip("+").split(":")[-1]
         dest = dest.removeprefix("refs/heads/")
         if dest == "HEAD":
-            dest = branch_of(cwd)
+            dest = branch_of(cwd) if cwd is not None else None
             if dest is None:
                 return "ask", "push-implicit", "push destination can't be determined"
         if "*" in dest:
@@ -387,6 +387,12 @@ def check_command(
 ) -> tuple[Outcome, str, str] | None:
     """Return (outcome, rule, reason) for the strongest rule a command hits:
     any hold beats any ask, so a cautious rule can't mask a dangerous one."""
+    # `git -C dir push` pushes dir's branch: remember it before normalising.
+    git_dir = re.search(r"\bgit\s+(?:\S+\s+)*?-C\s+(\S+)", command)
+    push_cwd: Path | None = workspace
+    if git_dir:
+        resolved = _resolve(git_dir.group(1), workspace)
+        push_cwd = resolved
     command = GIT_GLOBALS.sub("git ", command)
     hits = [
         h
@@ -411,9 +417,7 @@ def check_command(
         if r.pattern.search(command)
     ]
     for argv in _commands(command) or []:
-        if argv[:2] == ["git", "push"] and (
-            h := _push_rule(argv, workspace, branch_of)
-        ):
+        if argv[:2] == ["git", "push"] and (h := _push_rule(argv, push_cwd, branch_of)):
             hits.append(h)
     if not hits:
         return None

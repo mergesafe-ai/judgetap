@@ -274,3 +274,16 @@ def test_current_branch_follows_worktree_gitdir(tmp_path):
     wt.mkdir()
     (wt / ".git").write_text(f"gitdir: {real}\n")
     assert current_branch(wt) == "feat/x"
+
+
+def test_git_dash_c_reads_that_repos_branch():
+    seen = []
+
+    def branch_of(cwd):
+        seen.append(cwd)
+        return "main" if str(cwd) == "/other/repo" else "feat"
+
+    hit = check_command("git -C /other/repo push", WS, branch_of=branch_of)
+    assert hit[:2] == ("hold", "push-protected") and seen == [Path("/other/repo")]
+    hit = check_command("git -C $REPO push", WS, branch_of=branch_of)
+    assert hit[:2] == ("ask", "push-implicit")
