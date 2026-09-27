@@ -84,13 +84,16 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
     calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
-    cost, total, false_holds, library, loops = 0.0, 0, 0, 0, 0
+    cost, total, false_holds, library, loops, stops = 0.0, 0, 0, 0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
         r["id"] = record_id(r, n)
         r["source"] = r.get("source") or "guard"
         r["false_alarm"] = r["id"] in false_alarms
         cost += r.get("cost_usd") or 0
         recent.append(r)
+        if r.get("layer") == "stop":
+            stops += 1  # a task-done check, not a guarded call
+            continue
         if r.get("layer") == "loop":
             loops += 1  # a note after repeated failures, not a guarded call
             continue
@@ -113,6 +116,7 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "total": total,
         "library": library,
         "loop_notes": loops,
+        "stop_checks": stops,
         "outcomes": dict(outcomes),
         "holds_per_1000": round(1000 * outcomes["hold"] / total, 1) if total else None,
         "false_alarms": false_holds,

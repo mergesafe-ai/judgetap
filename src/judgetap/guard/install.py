@@ -11,6 +11,7 @@ from judgetap.errors import JudgetapError
 
 HOOK_COMMAND = "judgetap guard hook"
 POST_COMMAND = "judgetap guard post"  # loop detection, Claude Code only
+STOP_COMMAND = "judgetap guard stop"  # opt-in task-done check, Claude Code only
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
 
@@ -52,7 +53,7 @@ OLD_HOOK_COMMAND = "snapjudge guard hook"  # written by installs before #38
 def _ours(command: str | None) -> bool:
     """Exactly a command this installer writes (now or under the old name);
     anything edited is the user's."""
-    return command == POST_COMMAND or command in {
+    return command in (POST_COMMAND, STOP_COMMAND) or command in {
         base + suffix
         for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
         for suffix in ("", " --agent cursor", " --agent codex")
@@ -86,28 +87,31 @@ def _event(agent: str) -> str:
     return "beforeShellExecution" if agent == "cursor" else "PreToolUse"
 
 
-def _events(agent: str) -> list[str]:
+def _events(agent: str, with_stop: bool = False) -> list[str]:
     if agent == "claude-code":
-        return ["PreToolUse", "PostToolUse"]
+        return ["PreToolUse", "PostToolUse", *(["Stop"] if with_stop else [])]
     return [_event(agent)]
 
 
 def _entry(agent: str, event: str) -> dict:
     if agent == "cursor":
         return {"command": hook_command(agent)}
+    if event == "Stop":  # Stop takes no matcher
+        return {"hooks": [{"type": "command", "command": STOP_COMMAND}]}
     command = POST_COMMAND if event == "PostToolUse" else hook_command(agent)
     # Codex's PreToolUse fires for shell only today; the matcher says so.
     matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
     return {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
 
 
-def install(path: Path, agent: str = "claude-code") -> bool:
-    """Add any missing guard hooks. True if the file changed."""
+def install(path: Path, agent: str = "claude-code", *, with_stop: bool = False) -> bool:
+    """Add any missing guard hooks. True if the file changed. `with_stop`
+    adds the experimental task-done check (Claude Code only, off by default)."""
     data = _load(path)
     if agent == "cursor":
         data.setdefault("version", 1)
     changed = _upgrade_old(data)  # an install from before the rename
-    for event in _events(agent):
+    for event in _events(agent, with_stop):
         entries = data.setdefault("hooks", {}).setdefault(event, [])
         if not any(_is_ours(e) for e in entries):
             entries.append(_entry(agent, event))
@@ -120,7 +124,7 @@ def install(path: Path, agent: str = "claude-code") -> bool:
 def uninstall(path: Path, agent: str = "claude-code") -> bool:
     data = _load(path)
     removed = False
-    for event in _events(agent):
+    for event in _events(agent, with_stop=True):  # remove every hook we may have added
         entries = data.get("hooks", {}).get(event, [])
         if not any(_is_ours(e) for e in entries):
             continue

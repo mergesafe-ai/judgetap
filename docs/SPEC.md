@@ -73,6 +73,8 @@ A pre-action hook for coding agents, built on the core.
 
 No engine by default, and nothing downloaded or stored. Rules-only mode fails closed for shell commands (it asks when unsure); without an engine, file writes and edits are only checked for secrets and user rules. `judgetap guard install` uses an engine the user already has, in this order: `$JUDGETAP_ENGINE`, a `TYPESAFE_API_KEY` (Jev), a local AgentJev server on 127.0.0.1:8149. It records the choice as `engine = "..."` in `~/.judgetap/guard.toml`, because agents often run hooks without the user's shell environment. Install never stores a key by itself; when it detects `TYPESAFE_API_KEY` in the environment and runs in a terminal, it offers (opt-in) to copy it into the OS keychain, and engines read the environment first, then the keychain. A local model isn't the default because of the download (Laya pulls PyTorch; AgentJev needs its own server), and the user's LLM key isn't auto-picked because it adds seconds per guarded call. Either is one line in guard.toml.
 
+**Experimental, opt-in: task-done check.** `judgetap guard install --with stop` adds a Claude Code `Stop` hook that asks the engine whether the user's task is actually finished. Only a confident "not done" (p(done) <= `stop_threshold`, default 0.15, set in `~/.judgetap/guard.toml`) blocks the stop, at most twice per session, and never while a previous block is being handled. It needs an engine and is off by default until an eval set shows it's reliable.
+
 ## Non-goals (v0)
 
 - Training or hosting a decision model.

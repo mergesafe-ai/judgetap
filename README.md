@@ -89,3 +89,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 Apache-2.0
+
+
+**Experimental, opt-in: task-done check.** `judgetap guard install --with stop` adds a Claude Code `Stop` hook that asks the engine whether the user's task is actually finished. Only a confident "not done" (p(done) <= `stop_threshold`, default 0.15, set in `~/.judgetap/guard.toml`) blocks the stop, at most twice per session, and never while a previous block is being handled. It needs an engine and is off by default until an eval set shows it's reliable.
