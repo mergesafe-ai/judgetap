@@ -136,10 +136,12 @@ def _engine():
     from snapjudge.engines import load
 
     engine = load(spec)
-    if spec.partition(":")[0] == "jev" and not os.environ.get("TYPESAFE_API_KEY"):
+    # The engine looked the key up once when built; reuse that, don't hit the
+    # keychain a second time on every guarded action.
+    if getattr(engine, "needs_key", False):
         # Caught by the caller: the guard then runs rules only, failing closed.
         raise RuntimeError(
-            "engine is jev but TYPESAFE_API_KEY isn't visible to the hook"
+            "engine is jev but TYPESAFE_API_KEY isn't in the hook's env or the keychain"
         )
     return engine
 
