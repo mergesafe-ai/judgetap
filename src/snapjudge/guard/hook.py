@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -121,6 +123,7 @@ def log(action: Action, verdict: Verdict, session: str | None) -> None:
     path = home() / "guard.jsonl"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     record = {
+        "id": uuid.uuid4().hex,
         "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "session": session,
         "tool": action.tool,
@@ -141,59 +144,134 @@ def log(action: Action, verdict: Verdict, session: str | None) -> None:
         fh.write(json.dumps(record) + "\n")
 
 
-def respond(verdict: Verdict) -> dict[str, Any] | None:
-    out: dict[str, Any] = {}
+AGENTS = ("claude-code", "cursor", "codex")
+
+
+CODEX_SHELL_TOOLS = ("exec_command", "shell", "Bash")
+
+
+def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
+    """Map each agent's hook input onto Claude Code's PreToolUse shape."""
+    if agent == "cursor":  # beforeShellExecution: {command, cwd, ...}
+        return {
+            "tool_name": "Bash",
+            "tool_input": {"command": payload.get("command", "")},
+            "cwd": payload.get("cwd"),
+            "session_id": payload.get("conversation_id"),
+            "transcript_path": payload.get("transcript_path"),
+        }
+    if agent == "codex" and payload.get("tool_name") in CODEX_SHELL_TOOLS:
+        # Codex's shell tool is exec_command with tool_input.cmd (str or argv).
+        inp = payload.get("tool_input") or {}
+        cmd = inp.get("cmd", inp.get("command", ""))
+        if isinstance(cmd, list):
+            cmd = shlex.join(str(c) for c in cmd)
+        return {**payload, "tool_name": "Bash", "tool_input": {"command": cmd}}
+    return payload  # Claude Code's PreToolUse shape
+
+
+def _reason(verdict: Verdict) -> str:
+    reason = f"snapjudge guard: {verdict.reason}"
+    if verdict.outcome == "hold":
+        reason += ". If it is really needed, explain why and ask the user to run it."
+    return reason
+
+
+def respond(
+    verdict: Verdict, agent: str = "claude-code"
+) -> tuple[dict[str, Any] | None, int, str]:
+    """(stdout JSON or None, exit code, stderr text) for this agent."""
+    note = (
+        f"snapjudge guard: {verdict.reason} ({verdict.error})" if verdict.error else ""
+    )
+    if agent == "cursor":
+        # Cursor treats missing or invalid JSON on a permission hook as a
+        # decision, so always answer; allow defers to Cursor's own settings.
+        permission = {"hold": "deny", "ask": "ask"}.get(verdict.outcome, "allow")
+        out: dict[str, Any] = {"permission": permission}
+        if permission != "allow":
+            out["user_message"] = out["agent_message"] = _reason(verdict)
+        elif note:
+            out["user_message"] = note
+        return out, 0, ""
+    if agent == "codex":
+        # Codex has no "ask" from PreToolUse: both hold and ask deny, and the
+        # reason tells the agent to get the user's go-ahead. Exit 2 + stderr
+        # is the documented block.
+        if verdict.outcome in ("hold", "ask"):
+            reason = _reason(verdict)
+            if verdict.outcome == "ask":
+                reason += " Ask the user before running it."
+            return None, 2, reason
+        return {}, 0, note
+    out = {}
     if verdict.outcome in ("hold", "ask"):
-        reason = f"snapjudge guard: {verdict.reason}"
-        if verdict.outcome == "hold":
-            reason += (
-                ". If it is really needed, explain why and ask the user to run it."
-            )
         out["hookSpecificOutput"] = {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny" if verdict.outcome == "hold" else "ask",
-            "permissionDecisionReason": reason,
+            "permissionDecisionReason": _reason(verdict),
         }
-    if verdict.error:
-        out["systemMessage"] = f"snapjudge guard: {verdict.reason} ({verdict.error})"
-    return out or None
+    if note:
+        out["systemMessage"] = note
+    return out or None, 0, ""
 
 
-def run(stdin=sys.stdin, stdout=sys.stdout, *, record: bool = True) -> int:
-    """Hook entry point. Always exits 0: a crashing hook is ignored by Claude
-    Code, so failures are reported through systemMessage instead."""
+def run(
+    stdin=sys.stdin,
+    stdout=sys.stdout,
+    stderr=sys.stderr,
+    *,
+    record: bool = True,
+    agent: str = "claude-code",
+) -> int:
+    """Hook entry point; returns the exit code. Failures never block: they
+    allow the action and say so, since a crashing hook is ignored anyway."""
     start = time.perf_counter()
+    code, err_text = 0, ""
     try:
-        payload = json.load(stdin)
+        payload = normalise(json.load(stdin), agent)
         action = action_from_hook(payload)
         if action is None:
-            return 0
-        try:
-            engine = _engine()
-        except Exception as err:  # noqa: BLE001 -- bad engine config degrades to rules only
-            engine, engine_error = None, f"{type(err).__name__}: {err}"
+            out = {"permission": "allow"} if agent == "cursor" else None
         else:
-            engine_error = None
-        rules, config_error = [], None
-        for path in (home() / "guard.toml", action.cwd / "guard.toml"):
-            try:
-                rules += load_user_rules(path)
-            except Exception as err:  # noqa: BLE001 -- a bad config must not disable built-ins
-                config_error = f"ignored {path}: {err}"
-        verdict = check(action, engine, rules)
-        problem = engine_error or config_error
-        if problem and not verdict.error:
-            verdict.error = problem
-            verdict.reason = verdict.reason or "engine unavailable; rules only"
-        verdict.latency_ms = verdict.latency_ms or (time.perf_counter() - start) * 1000
-        if record:
-            try:
-                log(action, verdict, payload.get("session_id"))
-            except OSError:
-                pass
-        out = respond(verdict)
+            verdict = _decide(action, start)
+            if record:
+                try:
+                    log(action, verdict, payload.get("session_id"))
+                except OSError:
+                    pass
+            out, code, err_text = respond(verdict, agent)
     except Exception as err:  # noqa: BLE001 -- never break the agent, always say so
-        out = {"systemMessage": f"snapjudge guard failed and allowed the action: {err}"}
-    if out:
+        message = f"snapjudge guard failed and allowed the action: {err}"
+        out = (
+            {"permission": "allow", "user_message": message}
+            if agent == "cursor"
+            else {"systemMessage": message}
+        )
+    if out is not None:
         json.dump(out, stdout)
-    return 0
+    if err_text:
+        print(err_text, file=stderr)
+    return code
+
+
+def _decide(action: Action, start: float) -> Verdict:
+    try:
+        engine = _engine()
+    except Exception as err:  # noqa: BLE001 -- bad engine config degrades to rules only
+        engine, engine_error = None, f"{type(err).__name__}: {err}"
+    else:
+        engine_error = None
+    rules, config_error = [], None
+    for path in (home() / "guard.toml", action.cwd / "guard.toml"):
+        try:
+            rules += load_user_rules(path)
+        except Exception as err:  # noqa: BLE001 -- a bad config must not disable built-ins
+            config_error = f"ignored {path}: {err}"
+    verdict = check(action, engine, rules)
+    problem = engine_error or config_error
+    if problem and not verdict.error:
+        verdict.error = problem
+        verdict.reason = verdict.reason or "engine unavailable; rules only"
+    verdict.latency_ms = verdict.latency_ms or (time.perf_counter() - start) * 1000
+    return verdict

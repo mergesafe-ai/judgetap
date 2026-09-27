@@ -10,10 +10,22 @@ HOOK_COMMAND = "snapjudge guard hook"
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
 
-def settings_path(scope: str, cwd: Path) -> Path:
-    if scope == "user":
-        return Path.home() / ".claude" / "settings.json"
-    return cwd / ".claude" / "settings.json"
+AGENT_DIRS = {"claude-code": ".claude", "cursor": ".cursor", "codex": ".codex"}
+
+
+def settings_path(scope: str, cwd: Path, agent: str = "claude-code") -> Path:
+    base = Path.home() if scope == "user" else cwd
+    name = "settings.json" if agent == "claude-code" else "hooks.json"
+    return base / AGENT_DIRS[agent] / name
+
+
+def detected_agents() -> list[str]:
+    """Agents with a config directory in the user's home."""
+    return [a for a, d in AGENT_DIRS.items() if (Path.home() / d).is_dir()]
+
+
+def hook_command(agent: str) -> str:
+    return HOOK_COMMAND if agent == "claude-code" else f"{HOOK_COMMAND} --agent {agent}"
 
 
 def _load(path: Path) -> dict:
@@ -30,37 +42,64 @@ def _write(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _ours(command: str | None) -> bool:
+    """Exactly a command this installer writes; anything edited is the user's."""
+    return command in {
+        HOOK_COMMAND,
+        *(f"{HOOK_COMMAND} --agent {a}" for a in ("cursor", "codex")),
+    }
+
+
 def _is_ours(entry: dict) -> bool:
-    return any(h.get("command") == HOOK_COMMAND for h in entry.get("hooks", []))
+    if _ours(entry.get("command")):  # Cursor's flat {"command": ...} entries
+        return True
+    return any(_ours(h.get("command")) for h in entry.get("hooks", []))
 
 
-def install(path: Path) -> bool:
+def _event(agent: str) -> str:
+    return "beforeShellExecution" if agent == "cursor" else "PreToolUse"
+
+
+def install(path: Path, agent: str = "claude-code") -> bool:
     """Return True if the hook was added, False if it was already there."""
     data = _load(path)
-    pre = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    if any(_is_ours(e) for e in pre):
+    if agent == "cursor":
+        data.setdefault("version", 1)
+    entries = data.setdefault("hooks", {}).setdefault(_event(agent), [])
+    if any(_is_ours(e) for e in entries):
         return False
-    pre.append(
-        {"matcher": MATCHER, "hooks": [{"type": "command", "command": HOOK_COMMAND}]}
-    )
+    command = hook_command(agent)
+    if agent == "cursor":
+        entries.append({"command": command})
+    else:
+        # Codex's PreToolUse fires for shell only today; the matcher says so.
+        matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
+        entries.append(
+            {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+        )
     _write(path, data)
     return True
 
 
-def uninstall(path: Path) -> bool:
+def uninstall(path: Path, agent: str = "claude-code") -> bool:
     data = _load(path)
-    pre = data.get("hooks", {}).get("PreToolUse", [])
+    event = _event(agent)
+    pre = data.get("hooks", {}).get(event, [])
     if not any(_is_ours(e) for e in pre):
         return False
     kept = []
     for entry in pre:
+        if "hooks" not in entry:  # Cursor's flat entries
+            if not _ours(entry.get("command")):
+                kept.append(entry)
+            continue
         # Remove only our hook; keep any others that share its matcher group.
-        hooks = [h for h in entry.get("hooks", []) if h.get("command") != HOOK_COMMAND]
+        hooks = [h for h in entry.get("hooks", []) if not _ours(h.get("command"))]
         if hooks:
             kept.append({**entry, "hooks": hooks})
-    data["hooks"]["PreToolUse"] = kept
+    data["hooks"][event] = kept
     if not kept:
-        del data["hooks"]["PreToolUse"]
+        del data["hooks"][event]
     if not data["hooks"]:
         del data["hooks"]
     _write(path, data)
