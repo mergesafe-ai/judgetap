@@ -8,6 +8,8 @@ import re
 import shutil
 from pathlib import Path
 
+from snapjudge.errors import SnapjudgeError
+
 HOOK_COMMAND = "snapjudge guard hook"
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
@@ -157,10 +159,24 @@ def write_engine(home: Path, spec: str) -> Path:
         raise ValueError(
             f"unknown engine {spec!r}; known: {', '.join(sorted(KNOWN_ENGINES))}"
         )
+    from snapjudge.engines import load  # builds the engine: no network, no key needed
+
+    try:
+        load(spec)
+    except SnapjudgeError as err:
+        raise ValueError(str(err)) from err
     path = home / "guard.toml"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = path.read_text().splitlines() if path.exists() else []
-    # Only the top-level `engine` key: `engine_options = ...` and the like stay.
-    lines = [ln for ln in lines if not re.match(r"\s*engine\s*=", ln)]
+    # Only the top-level `engine` key, before the first [table]: keys like
+    # `engine_options` and an `engine` inside a table stay.
+    first_table = next(
+        (i for i, ln in enumerate(lines) if ln.lstrip().startswith("[")), len(lines)
+    )
+    lines = [
+        ln
+        for i, ln in enumerate(lines)
+        if i >= first_table or not re.match(r"\s*engine\s*=", ln)
+    ]
     path.write_text(f'engine = "{spec}"\n' + "\n".join(lines) + ("\n" if lines else ""))
     return path

@@ -116,9 +116,11 @@ def engine_spec() -> str | None:
     The file matters because agents often run hooks without the user's
     shell environment, so an exported variable may never reach the hook.
     """
-    spec = os.environ.get("SNAPJUDGE_ENGINE")
-    if spec:
-        return spec
+    return os.environ.get("SNAPJUDGE_ENGINE") or saved_engine()
+
+
+def saved_engine() -> str | None:
+    """`engine` from ~/.snapjudge/guard.toml only, ignoring the environment."""
     path = home() / "guard.toml"
     if not path.is_file():
         return None

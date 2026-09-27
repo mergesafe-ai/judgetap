@@ -393,3 +393,24 @@ def test_write_engine_keeps_similar_keys_and_rejects_unknown(tmp_path):
     assert 'engine_options = "strict"' in toml.read_text()
     with pytest.raises(ValueError, match="unknown engine"):
         write_engine(tmp_path, "typo")
+
+
+def test_install_persists_env_engine(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    main(["guard", "install", "--scope", "project"])
+    assert 'engine = "agentjev"' in (tmp_path / "home" / "guard.toml").read_text()
+
+
+def test_write_engine_keeps_table_scoped_engine_and_validates_fully(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\n[custom]\nengine = "keep-me"\n')
+    write_engine(tmp_path, "jev")
+    text = toml.read_text()
+    assert text.startswith('engine = "jev"') and 'engine = "keep-me"' in text
+    with pytest.raises(ValueError):
+        write_engine(tmp_path, "llm")  # a known name but no model

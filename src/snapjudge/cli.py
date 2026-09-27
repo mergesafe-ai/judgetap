@@ -29,7 +29,7 @@ def _agents(args) -> list[str]:
 
 
 def _guard_install(args) -> int:
-    from snapjudge.guard.hook import engine_spec, home
+    from snapjudge.guard.hook import home, saved_engine
     from snapjudge.guard.install import (
         detect_engine,
         install,
@@ -43,7 +43,7 @@ def _guard_install(args) -> int:
         print(f"{agent}: {'installed' if added else 'already installed'} in {path}")
         if agent == "codex":
             print("  codex: review and trust the new hook with /hooks before it runs.")
-    existing = engine_spec()
+    existing = saved_engine()  # the file, not the env: hooks may not see the env
     if existing and not args.detect:
         # A chosen engine is kept; re-detection only when asked for.
         print(f"Engine: keeping {existing} (re-detect with --detect).")
