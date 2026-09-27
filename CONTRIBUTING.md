@@ -44,3 +44,9 @@ Don't open public issues for vulnerabilities. Report them privately through
 ## License
 
 By contributing you agree your work is licensed under Apache-2.0.
+
+## Releases
+
+- Every merge to `main` publishes a dev build to PyPI (`X.Y.Z.devN`). `pip install judgetap` ignores it; `pip install --pre judgetap` gets it.
+- A stable version is published only when a GitHub Release is created: release-please keeps a release PR open with the next version and the changelog, built from conventional commit titles, and merging it tags and publishes. A release published by hand in GitHub is published the same way, after checking the tag matches the package version.
+- Publishing uses PyPI Trusted Publishing (OIDC): no tokens are stored anywhere.

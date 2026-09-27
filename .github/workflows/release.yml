@@ -1,14 +1,27 @@
+# Two channels to PyPI, one trusted publisher (this file, environment `pypi`):
+#   - every push to main  -> a dev pre-release (X.Y.Z.devN). pip ignores
+#     pre-releases by default, so `pip install judgetap` never gets one;
+#     `pip install --pre judgetap` does.
+#   - a GitHub Release     -> the stable version ("latest"). Releases come from
+#     merging release-please's release PR, or from publishing one by hand.
 name: release
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       released: ${{ steps.rp.outputs.release_created }}
@@ -20,9 +33,15 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  # Stable: the release-please release (created with GITHUB_TOKEN, which
+  # doesn't trigger `release` events, so no double publish) or a release
+  # published by hand in the GitHub UI.
   publish:
     needs: release-please
-    if: needs.release-please.outputs.released == 'true'
+    if: >-
+      always() &&
+      ((github.event_name == 'push' && needs.release-please.outputs.released == 'true') ||
+       (github.event_name == 'release' && !github.event.release.prerelease))
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -31,7 +50,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag }}
+          ref: ${{ needs.release-please.outputs.tag || github.event.release.tag_name }}
       - uses: astral-sh/setup-uv@v6
+      - name: Check the tag matches the package version
+        run: |
+          tag="${{ needs.release-please.outputs.tag || github.event.release.tag_name }}"
+          version=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "${tag#v}" = "$version" || { echo "tag $tag != version $version"; exit 1; }
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Dev: every push to main that isn't itself a release.
+  publish-dev:
+    needs: release-please
+    if: github.event_name == 'push' && needs.release-please.outputs.released != 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Set a dev version for the next patch
+        # 0.1.0 on main -> 0.1.1.dev<run number>: sorts after the last release
+        # and before the next one, and is unique per run.
+        run: |
+          uv run --no-project python - <<'EOF'
+          import json, re, pathlib
+          current = json.load(open(".release-please-manifest.json"))["."]
+          major, minor, patch = (int(x) for x in current.split("."))
+          dev = f"{major}.{minor}.{patch + 1}.dev${{ github.run_number }}"
+          p = pathlib.Path("pyproject.toml")
+          p.write_text(re.sub(r'^version = ".*?"', f'version = "{dev}"', p.read_text(), count=1, flags=re.M))
+          i = pathlib.Path("src/judgetap/__init__.py")
+          i.write_text(re.sub(r'__version__ = ".*?"', f'__version__ = "{dev}"', i.read_text(), count=1))
+          print("dev version", dev)
+          EOF
       - run: uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
