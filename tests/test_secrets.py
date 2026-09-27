@@ -121,3 +121,24 @@ def test_ipv6_loopback_spec_installs(tmp_path):
 
     write_engine(tmp_path, "jev@http://[::1]:8000")
     assert 'engine = "jev@http://[::1]:8000"' in (tmp_path / "guard.toml").read_text()
+
+
+def test_detect_engine_finds_a_keychain_only_key(kr, monkeypatch):
+    from snapjudge.guard.install import detect_engine
+
+    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "k"
+    assert detect_engine(probe=lambda: False)[0] == "jev"
+
+
+def test_hook_reads_the_keychain_once(kr, monkeypatch, tmp_path):
+    from snapjudge.guard import hook
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "k"
+    reads = []
+    real = kr.get_password
+    kr.get_password = lambda service, name: reads.append(name) or real(service, name)
+    assert hook._engine() is not None
+    assert reads == ["TYPESAFE_API_KEY"]

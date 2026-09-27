@@ -102,6 +102,11 @@ class JevEngine:
         self._max_retries = max_retries
         self._transport = transport
 
+    @property
+    def needs_key(self) -> bool:
+        """True when a remote endpoint has no key to authenticate with."""
+        return not self.local and not self._api_key
+
     def __repr__(self) -> str:  # never print the key
         return f"JevEngine(model={self.model!r}, base_url={self.base_url!r})"
 

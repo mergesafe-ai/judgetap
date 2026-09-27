@@ -119,7 +119,9 @@ def detect_engine(probe=None) -> tuple[str | None, str]:
     """
     if os.environ.get("SNAPJUDGE_ENGINE"):
         return os.environ["SNAPJUDGE_ENGINE"], "from $SNAPJUDGE_ENGINE"
-    if os.environ.get("TYPESAFE_API_KEY"):
+    from snapjudge.secrets import get_key
+
+    if get_key("TYPESAFE_API_KEY"):  # env or OS keychain
         return "jev", "found TYPESAFE_API_KEY"
     probe = probe or agentjev_up
     if probe():
