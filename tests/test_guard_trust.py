@@ -245,3 +245,48 @@ def test_repo_allow_warning_once_per_session(tmp_path, monkeypatch):
 
     assert "ignored" in run().get("systemMessage", "")
     assert "systemMessage" not in run()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x 2>guard.toml",
+        "cp settings.json --target-directory=.claude && mv .claude/settings.json .claude/settings.local.json",
+        "dd if=x of=.codex/config.toml",
+        "python3 -c \"open('guard.toml','w').write('')\"",
+        "cat guard.toml",
+    ],
+)
+def test_any_mention_of_guard_config_asks(command, tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    hit = check_command_writes(command, tmp_path)
+    assert hit is not None and hit[0] == "ask"
+
+
+def test_symlinked_config_in_a_shell_word_asks(tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    (tmp_path / "guard.toml").write_text("")
+    (tmp_path / "alias.cfg").symlink_to(tmp_path / "guard.toml")
+    assert check_command_writes("echo x > alias.cfg", tmp_path) is not None
+
+
+def test_unrelated_commands_do_not_ask(tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    assert check_command_writes("echo hi > notes.txt && cp a.py b.py", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ('DB_PRIVATE_KEY="two words" ./run', "words"),
+        ("api_token='a b' make", "a b"),
+        ('X_SECRET="q\\"x" y', 'x"'),
+    ],
+)
+def test_quoted_env_values_fully_redacted(command, leak):
+    from judgetap.guard.rules import redact
+
+    assert leak not in redact(command)

@@ -641,10 +641,6 @@ COMMAND_SECRETS = (
     ),
     # Env assignments with the keyword anywhere in the name:
     # AWS_SECRET_ACCESS_KEY=, GH_TOKEN_RW=, PGPASSWORD=, DB_PRIVATE_KEY=.
-    re.compile(
-        r"(?i)(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)"
-        r"[A-Z0-9_]*=)\S+"
-    ),
     # mysql/mariadb take the password attached: -phunter2 (a bare -p prompts).
     re.compile(
         r"(?P<keep>\b(mysql|mariadb|mysqldump|mysqladmin)\b[^;&|\n]*?\s-p)"
@@ -736,9 +732,30 @@ def _redact_segment(text: str) -> str:
     return "".join(out)
 
 
+ENV_SECRET = re.compile(
+    r"(?i)\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY)[A-Z0-9_]*="
+)
+
+
+def _redact_env_assignments(text: str) -> str:
+    """Mask the whole value of a secret-named assignment, quoted values and
+    escapes included (`DB_PRIVATE_KEY="two words"`), via the shell-word scanner."""
+    out, pos = [], 0
+    for m in ENV_SECRET.finditer(text):
+        if m.start() < pos:
+            continue
+        end = _shell_word_end(text, m.end())
+        if end > m.end():
+            out.append(text[pos : m.end()] + "[REDACTED]")
+            pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def redact(text: str) -> str:
     """Mask credential-looking values so a command can be logged."""
     text = _redact_basic_auth(text)
+    text = _redact_env_assignments(text)
     for _name, pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     for pattern in COMMAND_SECRETS:
@@ -898,36 +915,30 @@ def check_path(
     return None
 
 
-# Shell writes to a file: redirections (> and >>) plus the common writer
-# commands. Other ways to write a file are left to the judge.
-REDIRECT_TARGET = re.compile(r"(?:^|[^<>&0-9])>{1,2}\|?\s*(['\"]?)([^\s;&|'\"]+)\1")
-
-
-def _write_targets(command: str) -> list[str]:
-    targets = [m.group(2) for m in REDIRECT_TARGET.finditer(command)]
-    for argv in _commands(command) or []:
-        prog, args = Path(argv[0]).name, argv[1:]
-        operands = [a for a in args if not a.startswith("-")]
-        if prog == "tee":
-            targets += operands
-        elif prog in ("cp", "mv", "install", "ln") and operands:
-            targets.append(operands[-1])
-        elif prog == "sed" and any(
-            a == "-i" or a.startswith(("-i", "--in-place")) for a in args
-        ):
-            targets += operands[1:]  # the first operand is the script
-    return targets
+# Any mention of a guard-config file in a shell command asks. Parsing every
+# way the shell can write a file (fd redirects, --target-directory, dd of=,
+# python -c, ...) is an unbounded list; a mention is not. Reading the config
+# (`cat guard.toml`) asks too: rare, and cheap to approve.
+GUARD_CONFIG_MENTION = re.compile(
+    r"(?:guard\.toml|\.claude/settings[^\s'\"/]*\.json|\.cursor/hooks\.json"
+    r"|\.codex/hooks\.json|\.codex/config\.toml)"
+)
 
 
 def check_command_writes(
     command: str, cwd: Path | None = None
 ) -> tuple[Outcome, str, str] | None:
-    """Ask when a shell command writes to the guard's own configuration."""
-    for target in _write_targets(command):
-        if _is_guard_config(target, cwd):
-            return (
-                "ask",
-                "guard-config",
-                f"writes the guard's own configuration ({target})",
-            )
+    """Ask when a shell command mentions the guard's own configuration, or
+    a word in it resolves (symlinks followed) to one."""
+    if GUARD_CONFIG_MENTION.search(command.replace("\\", "/")):
+        return "ask", "guard-config", "touches the guard's own configuration"
+    for argv in _commands(command, unwrap=False) or []:
+        for word in argv:
+            candidate = word.split("=", 1)[-1]
+            if ("/" in word or "." in word) and _is_guard_config(candidate, cwd):
+                return (
+                    "ask",
+                    "guard-config",
+                    "touches the guard's own configuration",
+                )
     return None
