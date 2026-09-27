@@ -7,6 +7,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -15,7 +16,9 @@ from snapjudge.engine import Context, RawAnswer, plain_context
 from snapjudge.errors import SnapjudgeError
 from snapjudge.types import YES, Question
 
-API_URL = "https://api.typesafe.ai/v1/systemone"
+DEFAULT_BASE_URL = "https://api.typesafe.ai"
+API_PATH = "/v1/systemone"
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Published list price: $0.042 per million input tokens, output unmetered.
 USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
 RETRY_STATUSES = frozenset({429, 529})
@@ -71,8 +74,17 @@ class JevEngine:
         timeout: float = 10.0,
         max_retries: int = 3,
         transport: Transport = _urllib_transport,
+        base_url: str = DEFAULT_BASE_URL,
     ) -> None:
-        self.name = "jev"
+        parsed = urllib.parse.urlparse(base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise JevError(f"base_url must be an http(s) URL, got {base_url!r}")
+        self.base_url = base_url.rstrip("/")
+        # Any TypeSafe-compatible server on this machine: no key, no price.
+        self.local = parsed.hostname in LOCAL_HOSTS
+        self.name = (
+            "jev" if self.base_url == DEFAULT_BASE_URL else f"typesafe@{parsed.netloc}"
+        )
         self.model = model
         self._api_key = api_key or os.environ.get("TYPESAFE_API_KEY")
         self._timeout = timeout
@@ -80,12 +92,12 @@ class JevEngine:
         self._transport = transport
 
     def __repr__(self) -> str:  # never print the key
-        return f"JevEngine(model={self.model!r})"
+        return f"JevEngine(model={self.model!r}, base_url={self.base_url!r})"
 
     def decide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
-        if not self._api_key:
+        if not self._api_key and not self.local:
             raise JevError("no Jev API key: set TYPESAFE_API_KEY or pass api_key=")
         ids = [f"q{i}" for i in range(len(questions))]
         body = json.dumps(
@@ -97,15 +109,17 @@ class JevEngine:
                 },
             }
         ).encode()
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self._api_key and not self.local:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         data = self._post(headers, body)
         try:
             answers = data["answers"]
             tokens = data.get("usage", {}).get("input_tokens")
-            cost = tokens * USD_PER_INPUT_TOKEN / len(questions) if tokens else None
+            if self.local:
+                cost = 0.0
+            else:
+                cost = tokens * USD_PER_INPUT_TOKEN / len(questions) if tokens else None
             return [
                 RawAnswer(_distribution(q, answers[i]), cost_usd=cost)
                 for i, q in zip(ids, questions, strict=True)
@@ -120,7 +134,9 @@ class JevEngine:
 
     def _post(self, headers: dict[str, str], body: bytes) -> dict[str, Any]:
         for attempt in range(self._max_retries + 1):
-            status, raw = self._transport(API_URL, headers, body, self._timeout)
+            status, raw = self._transport(
+                self.base_url + API_PATH, headers, body, self._timeout
+            )
             if status == 200:
                 return json.loads(raw)
             if status in RETRY_STATUSES and attempt < self._max_retries:

@@ -147,3 +147,49 @@ def test_plain_context_stringifies_non_finite_floats():
     out = plain_context({"a": float("nan"), "b": [float("inf")]})
     _json.dumps(out, allow_nan=False)  # strict JSON
     assert out == {"a": "nan", "b": ["inf"]}
+
+
+def test_local_base_url_needs_no_key_and_is_free(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    t = Recorder(ok())
+    engine = JevEngine(base_url="http://127.0.0.1:8000/", transport=t)
+    out = sj.batch(QUESTIONS, engine=engine)
+    url, headers, _ = t.requests[0]
+    assert url == "http://127.0.0.1:8000/v1/systemone"
+    assert "Authorization" not in headers
+    assert (
+        all(d.cost_usd == 0.0 for d in out)
+        and out[0].engine == "typesafe@127.0.0.1:8000"
+    )
+
+
+def test_remote_base_url_still_needs_a_key(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    t = Recorder()
+    with pytest.raises(JevError, match="TYPESAFE_API_KEY"):
+        sj.yesno("q", engine=JevEngine(base_url="https://gw.example.com", transport=t))
+    assert t.requests == []
+
+
+def test_remote_base_url_sends_key():
+    t = Recorder(ok({"answers": {"q0": {"type": "noul", "noul": 0.5}}}))
+    sj.yesno(
+        "q",
+        engine=JevEngine(api_key="k", base_url="https://gw.example.com", transport=t),
+    )
+    assert t.requests[0][0] == "https://gw.example.com/v1/systemone"
+    assert t.requests[0][1]["Authorization"] == "Bearer k"
+
+
+@pytest.mark.parametrize("url", ["ftp://x", "127.0.0.1:8000", "http://"])
+def test_bad_base_url_rejected(url):
+    with pytest.raises(JevError, match="http"):
+        JevEngine(base_url=url)
+
+
+def test_url_specs():
+    assert load("jev@http://localhost:8000").base_url == "http://localhost:8000"
+    assert load("typesafe:http://127.0.0.1:9000").name == "typesafe@127.0.0.1:9000"
+    assert load("jev").name == "jev"
+    with pytest.raises(sj.SnapjudgeError):
+        load("typesafe")
