@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import socket
 from pathlib import Path
 
 HOOK_COMMAND = "snapjudge guard hook"
@@ -65,3 +67,38 @@ def uninstall(path: Path) -> bool:
         del data["hooks"]
     _write(path, data)
     return True
+
+
+def detect_engine(probe=None) -> tuple[str | None, str]:
+    """Pick an engine the user already has, and say why.
+
+    Order: an explicit $SNAPJUDGE_ENGINE, a TypeSafe key (Jev), a local
+    AgentJev server on its default port. Nothing is downloaded and no key is
+    stored: without one of these the guard runs rules only, which fail closed.
+    """
+    if os.environ.get("SNAPJUDGE_ENGINE"):
+        return os.environ["SNAPJUDGE_ENGINE"], "from $SNAPJUDGE_ENGINE"
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return "jev", "found TYPESAFE_API_KEY"
+    probe = probe or _agentjev_up
+    if probe():
+        return "agentjev", "AgentJev server answering on 127.0.0.1:8149"
+    return None, "no engine found; rules only (they ask when unsure)"
+
+
+def _agentjev_up(timeout: float = 0.3) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", 8149), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def write_engine(home: Path, spec: str) -> Path:
+    """Record the engine in guard.toml, keeping any user rules already there."""
+    path = home / "guard.toml"
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lines = path.read_text().splitlines() if path.exists() else []
+    lines = [ln for ln in lines if not ln.strip().startswith("engine")]
+    path.write_text(f'engine = "{spec}"\n' + "\n".join(lines) + ("\n" if lines else ""))
+    return path

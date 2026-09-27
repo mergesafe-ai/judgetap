@@ -54,7 +54,7 @@ Each hop is recorded on the `Decision`. Engine errors and timeouts fall through 
 
 ### 4. Calibration check
 
-`python -m snapjudge.evaluate cases.jsonl --engines jev,laya,llm:openai/gpt-4o-mini` (becoming `snapjudge eval` once the `snapjudge` command lands with the guard) runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
+`snapjudge eval cases.jsonl --engines jev,laya,llm:openai/gpt-4o-mini` (or `python -m snapjudge.evaluate`) runs labelled cases through each engine and reports accuracy, expected calibration error, a reliability table, p50/p95 latency and cost per 1,000 decisions. Output as Markdown and JSON, so results can be published with their data.
 
 ### 5. `snapjudge guard`
 
@@ -67,6 +67,10 @@ A pre-action hook for coding agents, built on the core.
 - **Outcomes**: allow (silent), hold (block with a reason the agent reads and re-plans from), ask (escalate to the user). Holds should be rare; the target is under 5 per 1,000 calls.
 - **Fails safe and visibly**: Claude Code treats a crashing hook as non-blocking, so the guard catches its own errors, applies the rules layer alone, and says so.
 - **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
+
+## Decided: the guard's default engine (#8)
+
+No engine by default, and nothing downloaded or stored. Rules-only mode fails closed (it asks when unsure), so it's safe on its own. `snapjudge guard install` uses an engine the user already has, in this order: `$SNAPJUDGE_ENGINE`, a `TYPESAFE_API_KEY` (Jev), a local AgentJev server on 127.0.0.1:8149. It records the choice as `engine = "..."` in `~/.snapjudge/guard.toml`, because agents often run hooks without the user's shell environment. A local model isn't the default because of the download (Laya pulls PyTorch; AgentJev needs its own server), and the user's LLM key isn't auto-picked because it adds seconds per guarded call. Either is one line in guard.toml.
 
 ## Non-goals (v0)
 
@@ -83,5 +87,4 @@ A pre-action hook for coding agents, built on the core.
 
 ## Open questions
 
-- Engine for the guard by default when the user has no Jev key: local model (download size) or their LLM key (latency)?
 - Does `eval` ship with a public case set of agent actions, and where do labelled cases come from?

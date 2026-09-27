@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,25 @@ def last_user_message(transcript_path: str | None) -> str | None:
     return next(filter(None, map(_user_text, lines)), None)
 
 
-def _engine():
+def engine_spec() -> str | None:
+    """$SNAPJUDGE_ENGINE, else `engine` in ~/.snapjudge/guard.toml.
+
+    The file matters because agents often run hooks without the user's
+    shell environment, so an exported variable may never reach the hook.
+    """
     spec = os.environ.get("SNAPJUDGE_ENGINE")
+    if spec:
+        return spec
+    path = home() / "guard.toml"
+    if not path.is_file():
+        return None
+    with path.open("rb") as fh:
+        value = tomllib.load(fh).get("engine")
+    return value if isinstance(value, str) and value else None
+
+
+def _engine():
+    spec = engine_spec()
     if not spec:
         return None
     from snapjudge.engines import load

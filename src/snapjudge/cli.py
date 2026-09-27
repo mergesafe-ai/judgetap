@@ -18,15 +18,27 @@ def _guard_hook(args) -> int:
 
 
 def _guard_install(args) -> int:
-    from snapjudge.guard.install import install, settings_path
+    from snapjudge.guard.hook import home
+    from snapjudge.guard.install import (
+        detect_engine,
+        install,
+        settings_path,
+        write_engine,
+    )
 
     path = settings_path(args.scope, Path.cwd())
     added = install(path)
     print(f"{'Installed' if added else 'Already installed'}: {path}")
-    print(
-        "Engine: set SNAPJUDGE_ENGINE (e.g. 'jev' with TYPESAFE_API_KEY) for judgements;"
-    )
-    print("without it the guard runs its rules only. Check with: snapjudge guard test")
+    spec, why = detect_engine()
+    if spec:
+        print(f"Engine: {spec} ({why}); saved to {write_engine(home(), spec)}")
+    else:
+        print(f"Engine: none ({why}).")
+        print(
+            "  For judgements: export TYPESAFE_API_KEY and re-run, or start AgentJev,"
+        )
+        print('  or set engine = "llm:<model>" in ~/.snapjudge/guard.toml.')
+    print("Check with: snapjudge guard test")
     return 0
 
 
@@ -119,6 +131,9 @@ def _guard_stats(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="snapjudge")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser(
+        "eval", help="compare engines on labelled cases (snapjudge eval --help)"
+    )
     guard = sub.add_parser("guard", help="pre-action guard for coding agents")
     gsub = guard.add_subparsers(dest="guard_command", required=True)
     gsub.add_parser("hook", help="run as a Claude Code PreToolUse hook").set_defaults(
@@ -137,6 +152,11 @@ def main(argv: list[str] | None = None) -> int:
     gsub.add_parser("stats", help="summarise the guard log").set_defaults(
         func=_guard_stats
     )
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["eval"]:  # its own argparse, so its --help and flags pass through
+        from snapjudge.evaluate import main as eval_main
+
+        return eval_main(argv[1:])
     args = parser.parse_args(argv)
     return args.func(args)
 

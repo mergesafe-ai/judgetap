@@ -262,3 +262,46 @@ def test_transcript_rewrite_is_seen_immediately(tmp_path):
     assert hook.last_user_message(str(t)) == "old"
     t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
     assert hook.last_user_message(str(t)) == "new"
+
+
+def test_engine_spec_from_env_then_guard_toml(tmp_path, monkeypatch):
+    assert hook.engine_spec() is None
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / "guard.toml").write_text(
+        'engine = "agentjev"\n[[rule]]\npattern = "x"\n'
+    )
+    assert hook.engine_spec() == "agentjev"
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    assert hook.engine_spec() == "jev"
+
+
+def test_detect_engine_order(monkeypatch):
+    from snapjudge.guard.install import detect_engine
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert detect_engine(probe=lambda: False)[0] is None
+    assert detect_engine(probe=lambda: True)[0] == "agentjev"
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    assert detect_engine(probe=lambda: True)[0] == "jev"
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "llm:openai/x")
+    assert detect_engine(probe=lambda: True)[0] == "llm:openai/x"
+
+
+def test_write_engine_keeps_user_rules(tmp_path):
+    from snapjudge.guard.core import load_user_rules
+    from snapjudge.guard.install import write_engine
+
+    toml = tmp_path / "guard.toml"
+    toml.write_text('engine = "old"\n[[rule]]\npattern = "kubectl"\n')
+    write_engine(tmp_path, "jev")
+    text = toml.read_text()
+    assert text.startswith('engine = "jev"') and "old" not in text
+    assert len(load_user_rules(toml)) == 1
+
+
+def test_eval_subcommand_is_registered(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["eval", "--help"])
+    assert "snapjudge eval" in capsys.readouterr().out
