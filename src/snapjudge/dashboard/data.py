@@ -5,80 +5,88 @@ from __future__ import annotations
 import json
 import math
 import os
-from collections import Counter, defaultdict
-from datetime import UTC, datetime
+from collections import Counter, defaultdict, deque
+from collections.abc import Iterable, Iterator
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 MAX_RECENT = 500
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+DAYS = 30
+MAX_LATENCIES = 10_000  # per engine, newest kept: bounded memory
+
+
+def _iter_jsonl(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
+    """(line number, record) for each parseable line, streamed."""
     if not path.is_file():
-        return []
-    out = []
+        return
     with path.open() as fh:
-        for line in fh:
+        for n, line in enumerate(fh, 1):
             try:
                 record = json.loads(line)
             except ValueError:
                 continue  # a line cut off by a concurrent write
             if isinstance(record, dict):
-                out.append(record)
-    return out
+                yield n, record
 
 
-def record_id(record: dict[str, Any]) -> str:
-    """Stable id for a log line: its timestamp plus session."""
-    return f"{record.get('ts', '')}|{record.get('session') or ''}"
+def record_id(record: dict[str, Any], line: int = 0) -> str:
+    """The id the guard wrote, or for older lines without one, timestamp,
+    session and line number, which is unique within the log."""
+    if record.get("id"):
+        return str(record["id"])
+    return f"{record.get('ts', '')}|{record.get('session') or ''}|{line}"
 
 
-def load(home: Path) -> dict[str, Any]:
-    records = _read_jsonl(home / "guard.jsonl")
+def load(home: Path, today: date | None = None) -> dict[str, Any]:
     false_alarms = {
         f["id"]
-        for f in _read_jsonl(home / "feedback.jsonl")
-        if f.get("verdict") == "false-alarm"
+        for _, f in _iter_jsonl(home / "feedback.jsonl")
+        if f.get("verdict") == "false-alarm" and isinstance(f.get("id"), str)
     }
-    for r in records:
-        r["id"] = record_id(r)
+    today = today or datetime.now(UTC).date()
+    window = [(today - timedelta(days=i)).isoformat() for i in range(DAYS - 1, -1, -1)]
+    per_day: dict[str, Counter] = {d: Counter() for d in window}
+    outcomes: Counter = Counter()
+    by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
+    recent: deque = deque(maxlen=MAX_RECENT)
+    cost, total, false_holds = 0.0, 0, 0
+    for n, r in _iter_jsonl(home / "guard.jsonl"):
+        r["id"] = record_id(r, n)
         r["false_alarm"] = r["id"] in false_alarms
-    return {"summary": summarise(records), "recent": records[-MAX_RECENT:][::-1]}
-
-
-def _rank(values: list[float], q: float) -> float | None:
-    if not values:
-        return None
-    values = sorted(values)
-    return values[max(0, math.ceil(q * len(values)) - 1)]
-
-
-def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
-    outcomes = Counter(r.get("outcome") for r in records)
-    by_engine: dict[str, list[float]] = defaultdict(list)
-    per_day: dict[str, Counter] = defaultdict(Counter)
-    cost = 0.0
-    for r in records:
+        total += 1
+        outcomes[r.get("outcome")] += 1
+        if r.get("outcome") == "hold" and r["false_alarm"]:
+            false_holds += 1
         if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
             by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
         cost += r.get("cost_usd") or 0
         day = str(r.get("ts", ""))[:10]
-        if day:
+        if day in per_day:
             per_day[day][r.get("outcome")] += 1
-    holds = [r for r in records if r.get("outcome") == "hold"]
-    total = len(records)
-    return {
+        recent.append(r)
+    summary = {
         "total": total,
         "outcomes": dict(outcomes),
         "holds_per_1000": round(1000 * outcomes["hold"] / total, 1) if total else None,
-        "false_alarms": sum(1 for r in holds if r.get("false_alarm")),
+        "false_alarms": false_holds,
         "cost_usd": round(cost, 6),
         "engines": {
             name: {"calls": len(v), "p50_ms": _rank(v, 0.5), "p95_ms": _rank(v, 0.95)}
             for name, v in sorted(by_engine.items())
         },
-        "per_day": {day: dict(c) for day, c in sorted(per_day.items())[-30:]},
+        "per_day": {d: dict(c) for d, c in per_day.items()},
     }
+    return {"summary": summary, "recent": list(recent)[::-1]}
+
+
+def _rank(values: Iterable[float], q: float) -> float | None:
+    values = sorted(values)
+    if not values:
+        return None
+    return values[max(0, math.ceil(q * len(values)) - 1)]
 
 
 def mark_false_alarm(home: Path, rid: str, known: set[str]) -> bool:

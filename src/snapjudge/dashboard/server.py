@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 
-from snapjudge.dashboard.data import load, mark_false_alarm, record_id
+from snapjudge.dashboard.data import load, mark_false_alarm
 
 MAX_BODY = 4096
 
@@ -72,8 +72,10 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
                 rid = json.loads(self.rfile.read(length) or b"{}").get("id", "")
             except (ValueError, AttributeError):
                 return self._json(400, {"error": "bad json"})
+            if not isinstance(rid, str):
+                return self._json(400, {"error": "id must be a string"})
             known = {
-                record_id(r) for r in load(home)["recent"] if r.get("outcome") == "hold"
+                r["id"] for r in load(home)["recent"] if r.get("outcome") == "hold"
             }
             if not mark_false_alarm(home, rid, known):
                 return self._json(404, {"error": "no such hold"})

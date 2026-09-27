@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,7 @@ def log(action: Action, verdict: Verdict, session: str | None) -> None:
     path = home() / "guard.jsonl"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     record = {
+        "id": uuid.uuid4().hex,
         "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "session": session,
         "tool": action.tool,

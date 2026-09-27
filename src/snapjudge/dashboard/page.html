@@ -21,6 +21,8 @@ h2 { font-size:14px; margin:0 0 10px; }
 .days { display:flex; align-items:flex-end; gap:3px; height:80px; }
 .day { flex:1; display:flex; flex-direction:column-reverse; min-width:6px; }
 .day i { display:block; } .day .allow{background:var(--allow)} .day .ask{background:var(--ask)} .day .hold{background:var(--hold)}
+label { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:13px; }
+.status.error { color:var(--hold); }
 .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 select, input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
 .wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -34,16 +36,16 @@ button { background:none; border:1px solid var(--line); color:var(--accent); bor
 <body>
 <main>
   <h1>snapjudge dashboard</h1>
-  <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted"></span></p>
+  <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted status" role="status">Loading…</span></p>
   <div class="tiles" id="tiles"></div>
   <section><h2>Last 30 days</h2><div class="days" id="days"></div></section>
   <section><h2>Engines (judge calls)</h2><div class="wrap"><table id="engines"></table></div></section>
   <section>
     <h2>Recent decisions</h2>
     <div class="filters">
-      <select id="f-outcome"><option value="">All outcomes</option><option>hold</option><option>ask</option><option>allow</option></select>
-      <select id="f-layer"><option value="">All layers</option><option>rules</option><option>judge</option><option>skip</option><option>none</option></select>
-      <input id="f-text" placeholder="Filter command or reason">
+      <label>Outcome <select id="f-outcome"><option value="">All</option><option>hold</option><option>ask</option><option>allow</option></select></label>
+      <label>Layer <select id="f-layer"><option value="">All</option><option>rules</option><option>judge</option><option>skip</option><option>none</option></select></label>
+      <label>Search <input id="f-text" placeholder="Command or reason"></label>
     </div>
     <div class="wrap"><table id="recent"></table></div>
   </section>
@@ -84,16 +86,29 @@ function recent() {
       <td>${esc(r.layer)}${r.engine ? ` · ${esc(r.engine)}` : ""}</td>
       <td>${r.outcome === "hold" ? (r.false_alarm ? '<span class="muted">false alarm</span>' : `<button data-id="${esc(r.id)}">False alarm</button>`) : ""}</td></tr>`).join("");
 }
+let lastOk = null;
 async function refresh() {
-  const res = await fetch("/api/data");
-  data = await res.json();
-  tiles(data.summary); days(data.summary.per_day); engines(data.summary.engines); recent();
-  $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+  const status = $("updated");
+  try {
+    const res = await fetch("/api/data");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+    tiles(data.summary); days(data.summary.per_day); engines(data.summary.engines); recent();
+    lastOk = new Date();
+    status.textContent = "Updated " + lastOk.toLocaleTimeString();
+    status.classList.remove("error");
+  } catch (err) {
+    status.classList.add("error");
+    status.textContent = (lastOk
+      ? `Couldn't refresh (${err.message}); showing data from ${lastOk.toLocaleTimeString()}.`
+      : `Couldn't load data (${err.message}). Is snapjudge dashboard still running?`) + " Retrying in 10 s.";
+  }
 }
 $("recent").addEventListener("click", async (e) => {
   const id = e.target.dataset && e.target.dataset.id;
   if (!id) return;
-  await fetch("/api/false-alarm", { method: "POST", headers: { "Content-Type": "application/json", "X-Snapjudge-Token": TOKEN }, body: JSON.stringify({ id }) });
+  const res = await fetch("/api/false-alarm", { method: "POST", headers: { "Content-Type": "application/json", "X-Snapjudge-Token": TOKEN }, body: JSON.stringify({ id }) }).catch(() => null);
+  if (!res || !res.ok) { $("updated").classList.add("error"); $("updated").textContent = "Couldn't save the false alarm; try again."; return; }
   refresh();
 });
 ["f-outcome", "f-layer", "f-text"].forEach((id) => $(id).addEventListener("input", recent));
