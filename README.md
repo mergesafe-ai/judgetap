@@ -16,7 +16,8 @@ allow  git status  (should allow)
 ## Quickstart
 
 ```bash
-pip install "git+https://github.com/mergesafe-ai/judgetap"
+pip install judgetap          # latest release
+# pip install --pre judgetap  # newest build from main (X.Y.Z.devN)
 judgetap guard install --for claude-code        # or cursor, codex, all
 judgetap guard test "git push --force origin main"
 ```
