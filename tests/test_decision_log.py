@@ -64,3 +64,72 @@ def test_logging_failure_never_raises(tmp_path, monkeypatch):
     (tmp_path / "home").write_text("not a directory")
     sj.configure(engine(), log=True)
     assert sj.yesno("q").value == "yes"
+
+
+def test_guard_judge_batches_are_not_library_decisions(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.guard.core import Action, check
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    engine = StaticEngine(lambda q, c: {"yes": 0.1, "no": 0.9})
+    check(Action(tool="Bash", cwd=tmp_path, command="make deploy"), engine)
+    log = tmp_path / "guard.jsonl"
+    assert not log.exists() or "library" not in log.read_text()
+    sj.yesno("q", engine=engine)
+    assert log.read_text().count('"source": "library"') == 1
+
+
+def test_async_logging_runs_off_the_loop(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    import snapjudge as sj
+    from snapjudge import decision_log
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    threads = []
+    real = decision_log.record
+    monkeypatch.setattr(
+        decision_log,
+        "record",
+        lambda d: threads.append(threading.current_thread()) or real(d),
+    )
+
+    async def run():
+        await sj.ayesno("q", engine=StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}))
+        return threading.current_thread()
+
+    loop_thread = asyncio.run(run())
+    assert threads and threads[0] is not loop_thread
+
+
+def test_guard_stats_ignore_library_records(tmp_path, monkeypatch, capsys):
+    import json
+
+    from snapjudge.cli import main
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    rows = [
+        {
+            "outcome": "hold",
+            "layer": "rules",
+            "latency_ms": 1,
+            "cost_usd": None,
+            "error": None,
+        },
+        {
+            "source": "library",
+            "outcome": "yes",
+            "layer": "library",
+            "latency_ms": 5,
+            "cost_usd": 0.0,
+            "error": None,
+        },
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    main(["guard", "stats"])
+    assert "1 guarded calls" in capsys.readouterr().out
