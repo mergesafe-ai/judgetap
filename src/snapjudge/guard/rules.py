@@ -89,6 +89,12 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-fine-grained-token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     ("openai-key", re.compile(r"\bsk-(proj-)?[A-Za-z0-9_-]{32,}\b")),
     ("pypi-token", re.compile(r"\bpypi-[A-Za-z0-9_-]{50,}\b")),
+    ("stripe-live-key", re.compile(r"\b[sr]k_live_[A-Za-z0-9]{8,}\b")),
+    ("slack-token", re.compile(r"\bxox[abcprs]-[A-Za-z0-9-]{10,}\b")),
+    ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
+    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
+    ("typesafe-key", re.compile(r"\bapikey_[0-9a-f]{20,}_[0-9a-f]{20,}\b")),
 )
 
 
@@ -399,10 +405,19 @@ def _custom_push_config(cwd: Path) -> bool:
     # settings are unknown, so the destination is uncertain.
     if re.search(r"^\s*\[include(if)?\b", config, re.MULTILINE | re.IGNORECASE):
         return True
-    if re.search(
-        r"^\s*(push|pushremote|pushdefault)\s*=", config, re.MULTILINE | re.IGNORECASE
-    ):
+    if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
         return True
+    # remote.pushDefault picks the remote a plain push goes to; the same key
+    # in another tool's section means nothing to git.
+    for section in re.finditer(
+        r"^\s*\[remote\](.*?)(?=^\s*\[|\Z)",
+        config,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    ):
+        if re.search(
+            r"^\s*pushdefault\s*=", section.group(1), re.MULTILINE | re.IGNORECASE
+        ):
+            return True
     effective = None
     for section in re.finditer(
         # Section names are case-insensitive in git: [Push], [PUSH].
@@ -626,11 +641,92 @@ COMMAND_SECRETS = (
     ),
     re.compile(r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)=)\S+"),
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
+    # Basic auth on the command line: curl -u user:pass, --user=user:pass.
+    # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
+    # Bearer tokens outside an Authorization header (-H "Bearer x", env, args).
+    re.compile(r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
+    # Stripe test keys: redacted in logs, but not a reason to hold a write.
+    re.compile(r"(?P<keep>\b)[sr]k_test_[A-Za-z0-9]{8,}\b"),
 )
+
+
+AUTH_PROGRAMS = re.compile(r"(?<![\w-])(curl|wget|http|https|httpie|xh)(?![\w-])")
+USER_FLAG = re.compile(r"(?<![\w-])(--user|-u)(?==|\s|[^\s-])")
+
+
+def _shell_word_end(text: str, i: int) -> int:
+    """Index just past the shell word starting at i: quotes and backslash
+    escapes are followed, so `"bob:pa\\"ss"` is one word."""
+    quote = None
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c.isspace() or c in ";&|":
+            break
+        i += 1
+    return min(i, len(text))
+
+
+def _redact_basic_auth(text: str) -> str:
+    """Mask the whole argument of -u/--user, but only in HTTP clients:
+    `sort -u file:x` keeps its argument."""
+    # Scan segment by segment: `curl ...; sort -u file:x` leaves sort alone.
+    return "".join(
+        _redact_segment(p) if AUTH_PROGRAMS.search(p) else p for p in _segments(text)
+    )
+
+
+def _segments(text: str) -> list[str]:
+    """Split at ; & | and newlines outside quotes, keeping the separators,
+    so a quoted `bob:pa|ss` stays one piece."""
+    parts, start, i, quote = [], 0, 0, None
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c in ";&|\n":
+            parts.append(text[start:i])
+            parts.append(c)
+            start = i + 1
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _redact_segment(text: str) -> str:
+    out, pos = [], 0
+    for m in USER_FLAG.finditer(text):
+        if m.start() < pos:
+            continue
+        start = m.end()
+        if start < len(text) and text[start] == "=":
+            start += 1
+        while start < len(text) and text[start] in " \t":
+            start += 1
+        end = _shell_word_end(text, start)
+        if end > start:
+            out.append(text[pos:start] + "[REDACTED]")
+            pos = end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def redact(text: str) -> str:
     """Mask credential-looking values so a command can be logged."""
+    text = _redact_basic_auth(text)
     for _name, pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     for pattern in COMMAND_SECRETS:

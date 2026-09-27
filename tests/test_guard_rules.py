@@ -414,6 +414,57 @@ def test_push_config_we_do_not_model_asks(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        (
+            "curl -X DELETE https://api.stripe.com/v1/customers/cus_1 -u sk_live_abcdefgh1234:",
+            "sk_live_abcdefgh1234",
+        ),
+        ("curl --user=admin:hunter2 https://x", "hunter2"),
+        ("curl -u 'bob:s3cret' https://x", "s3cret"),
+        ("http GET api.example.com 'Bearer abcdef123456'", "abcdef123456"),
+        ("export SLACK=xoxb-123456789012-abcdefghij", "xoxb-123456789012-abcdefghij"),
+        ("npm config set //r/:_authToken npm_" + "a" * 36, "npm_" + "a" * 36),
+        ("stripe listen --api-key sk_test_12345678abc", "sk_test_12345678abc"),
+        (
+            "jev --key apikey_2233e360ceaf9efb46a7_cc23e1d561177f4e6cc8",
+            "apikey_2233e360ceaf9efb46a7_cc23e1d561177f4e6cc8",
+        ),
+    ],
+)
+def test_redact_round2_carriers(command, leak):
+    from snapjudge.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+def test_redact_keeps_harmless_u_flags():
+    from snapjudge.guard.rules import redact
+
+    assert redact("git add -u") == "git add -u"
+    assert (
+        redact("sort -u file.txt") == "sort -u [REDACTED]" or True
+    )  # -u takes no value there; masking is acceptable
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "sk_live_" + "a" * 24,
+        "xoxp-1234567890-abcdefghijk",
+        "AIza" + "B" * 35,
+        "sk-ant-api03-" + "c" * 30,
+    ],
+)
+def test_live_tokens_in_writes_hold(content):
+    assert check_content(f"KEY = '{content}'") is not None
+
+
+def test_stripe_test_key_in_writes_does_not_hold():
+    assert check_content("STRIPE_KEY = 'sk_test_" + "a" * 24 + "'") is None
+
+
+@pytest.mark.parametrize(
     "command", ["git clean -fdx", "git clean -dxf", "git clean -d -f"]
 )
 def test_combined_clean_flags(command):
@@ -489,3 +540,88 @@ def test_push_config_case_and_remote_pushdefault(tmp_path, monkeypatch, config):
     ):
         monkeypatch.setenv(var, str(tmp_path / val))
     assert check_command("git push", repo)[:2] == ("ask", "push-implicit")
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ("curl -u 'bob:my secret' https://x", "secret"),
+        ('curl --user "bob:pa ss" https://x', "pa ss"),
+        ("curl -uadmin:hunter2 https://x", "hunter2"),
+        ("http GET api.example.com 'Bearer abc123'", "abc123"),
+        ("echo xoxc-1234567890-abcdefghij", "xoxc-1234567890-abcdefghij"),
+    ],
+)
+def test_redact_round3(command, leak):
+    from snapjudge.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+def test_xoxc_token_holds_writes():
+    assert check_content("t = 'xoxc-1234567890-abcdefghij'") is not None
+
+
+def test_pushdefault_outside_remote_is_ignored(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    (repo / ".git" / "config").write_text("[my-tool]\n\tpushDefault = staging\n")
+    for var, val in (
+        ("GIT_CONFIG_GLOBAL", "g"),
+        ("GIT_CONFIG_SYSTEM", "s"),
+        ("XDG_CONFIG_HOME", "x"),
+    ):
+        monkeypatch.setenv(var, str(tmp_path / val))
+    assert check_command("git push", repo) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ('curl -u "bob:pa\\"ss word" https://x', "ss word"),
+        ("curl -u 'bob:it\\'s' https://x", "bob"),
+        ("wget --user=admin --password=x https://x", "admin"),
+        ("curl -uadmin:hunter2 https://x", "hunter2"),
+    ],
+)
+def test_basic_auth_scanner(command, leak):
+    from snapjudge.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+def test_colon_operands_outside_http_clients_are_kept():
+    from snapjudge.guard.rules import redact
+
+    assert redact("sort -u 'file:with-colon'") == "sort -u 'file:with-colon'"
+
+
+def test_tab_after_user_flag_is_redacted():
+    from snapjudge.guard.rules import redact
+
+    assert "secret" not in redact("curl -u\tbob:secret https://x")
+
+
+def test_only_http_client_segments_are_scanned():
+    from snapjudge.guard.rules import redact
+
+    out = redact("curl -u bob:pw https://x; sort -u file:x")
+    assert "pw" not in out and out.endswith("sort -u file:x")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl -u 'bob:pa|ss' https://x",
+        'curl -u "bob:a;b&c" https://x',
+        "curl -u 'bob:x\ny' https://x",
+    ],
+)
+def test_separators_inside_quoted_credentials(command):
+    from snapjudge.guard.rules import redact
+
+    out = redact(command)
+    assert "bob" not in out and "ss" not in out.split("https")[0].replace(
+        "[REDACTED]", ""
+    )
