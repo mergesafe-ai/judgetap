@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections.abc import Callable
@@ -66,7 +67,7 @@ COMMAND_RULES: tuple[Rule, ...] = (
     ),
     _r(
         "git-clean",
-        r"\bgit\s+clean\s+-\w*f",
+        r"\bgit\s+clean\s+(-\w*\s+)*-\w*f",
         "ask",
         "git clean -f deletes untracked files",
     ),
@@ -89,7 +90,7 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai-key", re.compile(r"\bsk-(proj-)?[A-Za-z0-9_-]{32,}\b")),
     ("pypi-token", re.compile(r"\bpypi-[A-Za-z0-9_-]{50,}\b")),
     ("stripe-live-key", re.compile(r"\b[sr]k_live_[A-Za-z0-9]{8,}\b")),
-    ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
+    ("slack-token", re.compile(r"\bxox[abcprs]-[A-Za-z0-9-]{10,}\b")),
     ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
@@ -367,32 +368,73 @@ def upstream_branch(cwd: Path, branch: str) -> str | None:
     return merge.group(1).removeprefix("refs/heads/") if merge else None
 
 
+def _global_configs() -> list[Path]:
+    """Existing system, XDG and global config files, lowest precedence first."""
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    candidates = [
+        os.environ.get("GIT_CONFIG_SYSTEM") or "/etc/gitconfig",
+        str(Path(xdg) / "git" / "config"),
+        os.environ.get("GIT_CONFIG_GLOBAL") or str(Path.home() / ".gitconfig"),
+    ]
+    return [Path(c) for c in candidates if Path(c).is_file()]
+
+
 def _custom_push_config(cwd: Path) -> bool:
-    """True when .git/config sets anything that changes where a plain push
-    goes beyond current/upstream: remote push refspecs, pushRemote, or a
-    push.default other than simple/current/upstream."""
+    """True when git config sets anything that changes where a plain push
+    goes beyond current/upstream: remote push refspecs, pushRemote, or an
+    effective push.default other than simple/current/upstream.
+
+    Scopes are read lowest precedence first (system, XDG, global, repo) and
+    every [push] section is scanned, so the last `default` wins as in git.
+    """
     dirs = _git_dirs(cwd)
     if dirs is None:
         return False
+    texts = []
+    for path in _global_configs():
+        try:
+            texts.append(path.read_text(errors="replace"))
+        except OSError:
+            continue
     try:
-        config = (dirs[1] / "config").read_text(errors="replace")
+        texts.append((dirs[1] / "config").read_text(errors="replace"))
     except OSError:
         return True  # can't read it: assume the worst
+    config = "\n".join(texts)
+    # [include]/[includeIf] pull in files we don't follow: their push
+    # settings are unknown, so the destination is uncertain.
+    if re.search(r"^\s*\[include(if)?\b", config, re.MULTILINE | re.IGNORECASE):
+        return True
     if re.search(r"^\s*(push|pushremote)\s*=", config, re.MULTILINE | re.IGNORECASE):
         return True
-    default = re.search(r"^\[push\](.*?)(?=^\[|\Z)", config, re.MULTILINE | re.DOTALL)
-    if default:
-        mode = re.search(
-            r"^\s*default\s*=\s*(\S+)", default.group(1), re.MULTILINE | re.IGNORECASE
-        )
-        if mode and mode.group(1).lower() not in (
-            "simple",
-            "current",
-            "upstream",
-            "tracking",
+    # remote.pushDefault picks the remote a plain push goes to; the same key
+    # in another tool's section means nothing to git.
+    for section in re.finditer(
+        r"^\s*\[remote\](.*?)(?=^\s*\[|\Z)",
+        config,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    ):
+        if re.search(
+            r"^\s*pushdefault\s*=", section.group(1), re.MULTILINE | re.IGNORECASE
         ):
             return True
-    return False
+    effective = None
+    for section in re.finditer(
+        # Section names are case-insensitive in git: [Push], [PUSH].
+        r"^\s*\[push\](.*?)(?=^\s*\[|\Z)",
+        config,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    ):
+        for mode in re.finditer(
+            r"^\s*default\s*=\s*(\S+)", section.group(1), re.MULTILINE | re.IGNORECASE
+        ):
+            effective = mode.group(1).lower()
+    return effective is not None and effective not in (
+        "simple",
+        "current",
+        "upstream",
+        "tracking",
+    )
 
 
 def current_branch(cwd: Path) -> str | None:
@@ -470,7 +512,7 @@ def _push_rule(
                 return (
                     "ask",
                     "push-implicit",
-                    "repo config rewrites where a plain push goes",
+                    "git config (repo, global or system) changes where a plain push goes",
                 )
             upstream = upstream_branch(cwd, branch) if spec == "HEAD" else None
             protected = [b for b in (branch, upstream) if b in PROTECTED_BRANCHES]
@@ -601,9 +643,13 @@ COMMAND_SECRETS = (
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
     # Basic auth on the command line: curl -u user:pass, --user=user:pass.
     # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
-    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)['\"]?)[^\s'\":]*:[^\s'\"]*"),
+    # Quoted values are consumed whole (passwords may contain spaces), and
+    # curl's attached form -uuser:pass is covered too.
+    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?')[^':]*:[^']*(?=')"),
+    re.compile(r'(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?")[^":]*:[^"]*(?=")'),
+    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?)[^\s'\":]*:[^\s'\"]*"),
     # Bearer tokens outside an Authorization header (-H "Bearer x", env, args).
-    re.compile(r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
     # Stripe test keys: redacted in logs, but not a reason to hold a write.
     re.compile(r"(?P<keep>\b)[sr]k_test_[A-Za-z0-9]{8,}\b"),
 )
@@ -722,7 +768,14 @@ def rules_only_check(command: str) -> tuple[Outcome, str, str] | None:
             i = progs.index("git")
             sub = next((a for a in argv[i + 1 :] if not a.startswith("-")), None)
             args = set(argv[i + 1 :])
-            if sub not in SAFE_GIT or args & DESTRUCTIVE_GIT_ARGS:
+            # Short flags may be combined (-fdx): compare letter by letter.
+            letters = {
+                f"-{c}"
+                for a in args
+                if a.startswith("-") and not a.startswith("--")
+                for c in a[1:]
+            }
+            if sub not in SAFE_GIT or (args | letters) & DESTRUCTIVE_GIT_ARGS:
                 return "ask", "rules-only", f"no engine configured to judge 'git {sub}'"
     return None
 

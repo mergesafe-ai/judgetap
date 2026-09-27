@@ -202,3 +202,58 @@ def test_page_has_filter_labels_and_status(server):
     base, _ = server
     body = call(base + "/")[1].decode()
     assert body.count("<label>") == 3 and 'role="status"' in body
+
+
+def test_engine_calls_are_counted_past_the_latency_cap(tmp_path, monkeypatch):
+    from snapjudge.dashboard import data
+
+    monkeypatch.setattr(data, "MAX_LATENCIES", 3)
+    rows = [
+        {
+            "ts": "2026-09-26T10:00:00+00:00",
+            "outcome": "allow",
+            "layer": "judge",
+            "engine": "jev",
+            "latency_ms": i,
+        }
+        for i in range(7)
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert data.load(tmp_path)["summary"]["engines"]["jev"]["calls"] == 7
+
+
+def test_load_is_cached_until_the_log_changes(tmp_path, monkeypatch):
+    from snapjudge.dashboard import data
+
+    log = tmp_path / "guard.jsonl"
+    log.write_text(json.dumps(ROWS[0]) + "\n")
+    calls = []
+    real = data._load
+    monkeypatch.setattr(data, "_load", lambda h, t: calls.append(1) or real(h, t))
+    data.load(tmp_path)
+    data.load(tmp_path)
+    assert len(calls) == 1
+    with log.open("a") as fh:
+        fh.write(json.dumps(ROWS[1]) + "\n")
+    assert data.load(tmp_path)["summary"]["total"] == 2 and len(calls) == 2
+
+
+def test_bad_content_length_is_400(server):
+    base, _ = server
+    headers = {"X-Snapjudge-Token": "tok", "Content-Length": "abc"}
+    req = urllib.request.Request(
+        base + "/api/false-alarm", data=b"", method="POST", headers=headers
+    )
+    req.remove_header("Content-length")
+    req.add_unredirected_header("Content-Length", "abc")
+    try:
+        urllib.request.urlopen(req)
+        status = 200
+    except urllib.error.HTTPError as err:
+        status = err.code
+    assert status == 400
+
+
+def test_page_has_empty_chart_message(server):
+    base, _ = server
+    assert b"No guarded calls in the last 30 days" in call(base + "/")[1]

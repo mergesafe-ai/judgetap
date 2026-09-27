@@ -40,17 +40,45 @@ def record_id(record: dict[str, Any], line: int = 0) -> str:
     return f"{record.get('ts', '')}|{record.get('session') or ''}|{line}"
 
 
+_cache: dict[tuple, dict[str, Any]] = {}
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
+
+
 def load(home: Path, today: date | None = None) -> dict[str, Any]:
+    """Summary and recent records. Cached until the log or feedback file
+    changes (or the day rolls over), so the page's 10 s polling doesn't
+    rescan an idle log."""
+    today = today or datetime.now(UTC).date()
+    key = (
+        str(home),
+        today,
+        _stamp(home / "guard.jsonl"),
+        _stamp(home / "feedback.jsonl"),
+    )
+    if key not in _cache:
+        _cache.clear()  # only the latest state is worth keeping
+        _cache[key] = _load(home, today)
+    return _cache[key]
+
+
+def _load(home: Path, today: date) -> dict[str, Any]:
     false_alarms = {
         f["id"]
         for _, f in _iter_jsonl(home / "feedback.jsonl")
         if f.get("verdict") == "false-alarm" and isinstance(f.get("id"), str)
     }
-    today = today or datetime.now(UTC).date()
     window = [(today - timedelta(days=i)).isoformat() for i in range(DAYS - 1, -1, -1)]
     per_day: dict[str, Counter] = {d: Counter() for d in window}
     outcomes: Counter = Counter()
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
+    calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds = 0.0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
@@ -62,6 +90,7 @@ def load(home: Path, today: date | None = None) -> dict[str, Any]:
             false_holds += 1
         if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
             by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
+            calls[r["engine"]] += 1
         cost += r.get("cost_usd") or 0
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
@@ -74,7 +103,11 @@ def load(home: Path, today: date | None = None) -> dict[str, Any]:
         "false_alarms": false_holds,
         "cost_usd": round(cost, 6),
         "engines": {
-            name: {"calls": len(v), "p50_ms": _rank(v, 0.5), "p95_ms": _rank(v, 0.95)}
+            name: {
+                "calls": calls[name],
+                "p50_ms": _rank(v, 0.5),
+                "p95_ms": _rank(v, 0.95),
+            }
             for name, v in sorted(by_engine.items())
         },
         "per_day": {d: dict(c) for d, c in per_day.items()},
