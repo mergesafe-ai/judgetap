@@ -60,13 +60,13 @@ Each hop is recorded on the `Decision`. Engine errors and timeouts fall through 
 
 A pre-action hook for coding agents, built on the core.
 
-- **Agents**: Claude Code (`PreToolUse`), Cursor (`preToolUse`, 1.7+, reads the Claude Code hook format), Codex (experimental hooks). One binary, `snapjudge guard install --for claude-code|cursor|codex|all`.
+- **Agents**: Claude Code (`PreToolUse`), Cursor (`preToolUse`, 1.7+, reads the Claude Code hook format), Codex (experimental hooks). One binary, `snapjudge guard install --for claude-code`; `cursor`, `codex` and `all` arrive with #6.
 - **Two layers**:
-  1. **Rules** (no model, microseconds): built-in list plus the user's `guard.toml`: recursive delete outside the workspace, force-push or push to protected branches, `DROP`/`DELETE` without `WHERE`, `terraform destroy`, secrets in written files.
+  1. **Rules** (no model, microseconds): built-in list plus the user's `guard.toml`: recursive delete outside the workspace, force-push or push to protected branches, `DROP`/`DELETE` without `WHERE`, `terraform destroy`, secrets in written files. This is a **denylist of common destructive forms, not a sandbox**: shell is a full language, and a determined or obfuscated command can always be written that no pattern set recognises. The rules fail closed where they can tell they can't see (unresolvable paths or command names, unknown push destinations) and otherwise catch what agents actually type. The judgement layer covers the rest; for isolation, use the agent's own sandbox. **With no engine configured**, the guard fails closed instead: anything a rule already holds still holds (e.g. `terraform destroy`), and otherwise programs whose effect the rules can't bound (terraform, kubectl, cloud CLIs, database shells, dd, xargs, `sh -c`, `sudo`, ...), git subcommands outside a known set or with destructive flags, and opaque destructive shell all *ask*.
   2. **Judgement** (snapjudge, ~250 ms): for everything the rules don't decide, ask: is it irreversible? is it off-task for the stated goal? does it break a rule in `AGENTS.md` / `CLAUDE.md` / `guard.md`?
 - **Outcomes**: allow (silent), hold (block with a reason the agent reads and re-plans from), ask (escalate to the user). Holds should be rare; the target is under 5 per 1,000 calls.
 - **Fails safe and visibly**: Claude Code treats a crashing hook as non-blocking, so the guard catches its own errors, applies the rules layer alone, and says so.
-- **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds, false holds and cost.
+- **Log**: every decision to a local JSONL, so `snapjudge guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
 
 ## Non-goals (v0)
 

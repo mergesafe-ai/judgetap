@@ -1,0 +1,264 @@
+import io
+import json
+
+import pytest
+
+from snapjudge.guard import hook
+from snapjudge.guard.install import HOOK_COMMAND, install, uninstall
+
+
+@pytest.fixture(autouse=True)
+def _home(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+
+
+def run(payload):
+    out = io.StringIO()
+    assert hook.run(io.StringIO(json.dumps(payload)), out) == 0
+    return json.loads(out.getvalue()) if out.getvalue() else None
+
+
+def bash(command, cwd):
+    return {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "cwd": str(cwd),
+        "session_id": "s1",
+    }
+
+
+def test_hold_becomes_deny_with_reason(tmp_path):
+    out = run(bash("git push --force", tmp_path))
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "force-push" in decision["permissionDecisionReason"]
+
+
+def test_allow_prints_nothing_so_normal_permissions_apply(tmp_path):
+    assert run(bash("make test", tmp_path)) is None
+
+
+def test_ask_becomes_ask(tmp_path):
+    out = run(bash("git reset --hard", tmp_path))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_unguarded_tools_are_ignored(tmp_path):
+    assert (
+        run({"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}}) is None
+    )
+
+
+def test_secret_write_is_held(tmp_path):
+    payload = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": "x.py", "content": "k='AKIAABCDEFGHIJKLMNOP'"},
+        "cwd": str(tmp_path),
+    }
+    assert run(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_log_records_decision_without_file_contents(tmp_path):
+    run(
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "x.py", "content": "SECRET_BODY"},
+            "cwd": str(tmp_path),
+        }
+    )
+    run(bash("git push -f", tmp_path))
+    lines = (tmp_path / "home" / "guard.jsonl").read_text().splitlines()
+    records = [json.loads(line) for line in lines]
+    assert [r["outcome"] for r in records] == ["allow", "hold"]
+    assert "SECRET_BODY" not in "".join(lines)
+
+
+def test_garbage_input_never_blocks():
+    out = io.StringIO()
+    assert hook.run(io.StringIO("not json"), out) == 0
+    assert "failed and allowed" in json.loads(out.getvalue())["systemMessage"]
+
+
+def test_bad_engine_spec_degrades_to_rules_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "nonsense")
+    out = run(bash("make deploy", tmp_path))
+    assert "systemMessage" in out
+
+
+def test_last_user_message_from_transcript(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {"type": "user", "message": {"content": "fix the typo"}},
+                {"type": "assistant", "message": {"content": "ok"}},
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "tool_result", "content": "x"}]},
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [{"type": "text", "text": "and add a test"}]
+                    },
+                },
+            ]
+        )
+    )
+    assert hook.last_user_message(str(t)) == "and add a test"
+
+
+def test_install_is_idempotent_and_uninstall_restores(tmp_path):
+    path = tmp_path / ".claude" / "settings.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "theme": "dark",
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"type": "command", "command": "rtk"}],
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    assert install(path) is True
+    assert install(path) is False
+    data = json.loads(path.read_text())
+    assert [h["hooks"][0]["command"] for h in data["hooks"]["PreToolUse"]] == [
+        "rtk",
+        HOOK_COMMAND,
+    ]
+    assert uninstall(path) is True
+    assert (
+        json.loads(path.read_text())["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        == "rtk"
+    )
+    assert data["theme"] == "dark"
+
+
+def test_logged_command_is_redacted_and_file_is_private(tmp_path):
+    import stat
+
+    run(bash("curl -H 'Authorization: Bearer topsecret' https://x", tmp_path))
+    log = tmp_path / "home" / "guard.jsonl"
+    assert "topsecret" not in log.read_text()
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
+
+
+def test_malformed_user_config_still_runs_builtins(tmp_path):
+    (tmp_path / "guard.toml").write_text("[[rule]\nbroken")
+    out = run(bash("git push --force", tmp_path))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ignored" in out["systemMessage"]
+
+
+def test_cli_test_does_not_write_the_log(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["guard", "test"]) == 0
+    assert not (tmp_path / "home" / "guard.jsonl").exists()
+    assert "deny" in capsys.readouterr().out
+
+
+def test_cli_stats_summarises_log(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    run(bash("git push -f", tmp_path))
+    run(bash("make test", tmp_path))
+    assert main(["guard", "stats"]) == 0
+    out = capsys.readouterr().out
+    assert "2 guarded calls" in out and "holds per 1,000 calls: 500.0" in out
+
+
+def test_cli_install_and_uninstall(tmp_path, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    main(["guard", "install", "--scope", "project"])
+    assert HOOK_COMMAND in (tmp_path / ".claude" / "settings.json").read_text()
+    main(["guard", "uninstall", "--scope", "project"])
+    assert HOOK_COMMAND not in (tmp_path / ".claude" / "settings.json").read_text()
+
+
+def test_uninstall_keeps_other_hooks_in_the_same_group(tmp_path):
+    path = tmp_path / "settings.json"
+    group = {
+        "matcher": "Bash",
+        "hooks": [
+            {"type": "command", "command": "rtk"},
+            {"type": "command", "command": HOOK_COMMAND},
+        ],
+    }
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [group]}}))
+    assert uninstall(path) is True
+    hooks = json.loads(path.read_text())["hooks"]["PreToolUse"][0]["hooks"]
+    assert [h["command"] for h in hooks] == ["rtk"]
+
+
+def test_stats_nearest_rank_percentiles(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    log = tmp_path / "home" / "guard.jsonl"
+    log.parent.mkdir(parents=True)
+    rows = [
+        {
+            "outcome": "allow",
+            "layer": "judge",
+            "latency_ms": ms,
+            "cost_usd": None,
+            "error": None,
+        }
+        for ms in (10, 20, 30, 40, 1000)
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    main(["guard", "stats"])
+    assert "p50 30 ms, p95 1000 ms" in capsys.readouterr().out
+
+
+def test_stats_skips_a_cut_off_line(tmp_path, capsys):
+    from snapjudge.cli import main
+
+    log = tmp_path / "home" / "guard.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        json.dumps(
+            {
+                "outcome": "hold",
+                "layer": "rules",
+                "latency_ms": 1,
+                "cost_usd": None,
+                "error": None,
+            }
+        )
+        + '\n{"outcome": "al'
+    )
+    assert main(["guard", "stats"]) == 0
+    assert "1 guarded calls" in capsys.readouterr().out
+
+
+def test_transcript_scan_is_bounded_and_skips_partial_tail(tmp_path, monkeypatch):
+    monkeypatch.setattr(hook, "TRANSCRIPT_SCAN_BYTES", 4096)
+    t = tmp_path / "t.jsonl"
+    user = lambda text: json.dumps({"type": "user", "message": {"content": text}})
+    filler = json.dumps({"type": "assistant", "message": {"content": "x" * 100}})
+    t.write_text(user("recent") + "\n" + filler + "\n" + user("half")[:15])
+    assert hook.last_user_message(str(t)) == "recent"  # partial tail skipped
+    t.write_text(user("far back") + "\n" + (filler + "\n") * 200)
+    assert hook.last_user_message(str(t)) is None  # beyond the scan window
+
+
+def test_transcript_rewrite_is_seen_immediately(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "old"}}) + "\n")
+    assert hook.last_user_message(str(t)) == "old"
+    t.write_text(json.dumps({"type": "user", "message": {"content": "new"}}) + "\n")
+    assert hook.last_user_message(str(t)) == "new"
