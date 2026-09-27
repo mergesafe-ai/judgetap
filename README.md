@@ -43,6 +43,11 @@ Any TypeSafe-compatible server is an engine: `sj.engines.load("jev@http://127.0.
 
 A pre-action hook for Claude Code (shell commands, file writes and edits), Cursor and Codex (shell commands only; their hooks don't expose writes and edits). Every command, file write and edit is checked before it runs: a denylist of common destructive forms (`rm -rf /`, force-push to `main`, `DROP TABLE`; best-effort, not a sandbox, see SPEC §5), and, once you configure an engine (`SNAPJUDGE_ENGINE`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Without an engine the guard runs its rules only. Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
 
+
+Keys: the guard reads `TYPESAFE_API_KEY` from the environment, then from the OS keychain
+(`pip install "snapjudge[keychain]"`, then `snapjudge keys set TYPESAFE_API_KEY`), because
+agents often run hooks without your shell's environment. Keys are never written to config or logs.
+
 ## Status
 
 Early development. See [docs/SPEC.md](docs/SPEC.md) for the design and the issues for the roadmap.

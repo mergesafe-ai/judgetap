@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 import urllib.error
 import urllib.parse
@@ -14,6 +13,7 @@ from typing import Any
 
 from snapjudge.engine import Context, RawAnswer, plain_context
 from snapjudge.errors import SnapjudgeError
+from snapjudge.secrets import get_key
 from snapjudge.types import YES, Question
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
@@ -97,7 +97,7 @@ class JevEngine:
             "jev" if self.base_url == DEFAULT_BASE_URL else f"typesafe@{parsed.netloc}"
         )
         self.model = model
-        self._api_key = api_key or os.environ.get("TYPESAFE_API_KEY")
+        self._api_key = api_key or get_key("TYPESAFE_API_KEY")
         self._timeout = timeout
         self._max_retries = max_retries
         self._transport = transport
@@ -109,7 +109,10 @@ class JevEngine:
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         if not self._api_key and not self.local:
-            raise JevError("no Jev API key: set TYPESAFE_API_KEY or pass api_key=")
+            raise JevError(
+                "no Jev API key: set TYPESAFE_API_KEY, save it with `snapjudge keys set "
+                "TYPESAFE_API_KEY`, or pass api_key="
+            )
         ids = [f"q{i}" for i in range(len(questions))]
         body = json.dumps(
             {

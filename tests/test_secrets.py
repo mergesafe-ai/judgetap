@@ -1,0 +1,123 @@
+import io
+import sys
+import types
+
+import pytest
+
+from snapjudge import secrets
+
+
+class FakeKeyring(types.ModuleType):
+    def __init__(self, fail=False):
+        super().__init__("keyring")
+        self.store = {}
+        self.fail = fail
+
+    def get_password(self, service, name):
+        if self.fail:
+            raise OSError("backend down")
+        return self.store.get((service, name))
+
+    def set_password(self, service, name, value):
+        if self.fail:
+            raise OSError("backend down")
+        self.store[(service, name)] = value
+
+
+@pytest.fixture
+def kr(monkeypatch):
+    fake = FakeKeyring()
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    return fake
+
+
+def test_env_wins_over_keychain(kr, monkeypatch):
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "from-keychain"
+    assert secrets.get_key("TYPESAFE_API_KEY") == "from-keychain"
+    monkeypatch.setenv("TYPESAFE_API_KEY", "from-env")
+    assert secrets.get_key("TYPESAFE_API_KEY") == "from-env"
+    assert secrets.key_source("TYPESAFE_API_KEY") == "env"
+
+
+def test_missing_keyring_is_none(monkeypatch):
+    monkeypatch.setitem(sys.modules, "keyring", None)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert secrets.get_key("TYPESAFE_API_KEY") is None
+    with pytest.raises(RuntimeError, match=r"snapjudge\[keychain\]"):
+        secrets.set_key("TYPESAFE_API_KEY", "x")
+
+
+def test_broken_backend_is_none(monkeypatch):
+    monkeypatch.setitem(sys.modules, "keyring", FakeKeyring(fail=True))
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert secrets.get_key("TYPESAFE_API_KEY") is None
+    with pytest.raises(RuntimeError, match="OSError"):
+        secrets.set_key("TYPESAFE_API_KEY", "x")
+
+
+def test_jev_engine_uses_keychain_key(kr):
+    from snapjudge.engines.jev import JevEngine
+
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "kc-key"
+    assert JevEngine()._api_key == "kc-key"
+    assert JevEngine(api_key="explicit")._api_key == "explicit"
+
+
+def test_hook_accepts_keychain_key(kr, tmp_path, monkeypatch):
+    from snapjudge.guard import hook
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    with pytest.raises(RuntimeError, match="keychain"):
+        hook._engine()
+    kr.store[("snapjudge", "TYPESAFE_API_KEY")] = "kc-key"
+    assert hook._engine().name == "jev"
+
+
+def test_keys_set_and_status(kr, monkeypatch, capsys):
+    from snapjudge.cli import main
+
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "s3cret-value")
+    assert main(["keys", "set", "TYPESAFE_API_KEY"]) == 0
+    assert kr.store[("snapjudge", "TYPESAFE_API_KEY")] == "s3cret-value"
+    main(["keys", "status"])
+    out = capsys.readouterr().out
+    assert "TYPESAFE_API_KEY: keychain" in out and "s3cret-value" not in out
+
+
+def test_install_non_tty_does_not_save_and_never_writes_key(
+    kr, tmp_path, monkeypatch, capsys
+):
+    from snapjudge.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-key-value")
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    main(["guard", "install", "--scope", "project"])
+    out = capsys.readouterr().out
+    assert "no terminal to ask" in out and not kr.store
+    assert "env-key-value" not in (tmp_path / "home" / "guard.toml").read_text()
+
+
+def test_install_tty_offers_to_save(kr, monkeypatch, capsys):
+    from snapjudge.cli import _offer_keychain
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-key-value")
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    _offer_keychain(Tty())
+    assert kr.store[("snapjudge", "TYPESAFE_API_KEY")] == "env-key-value"
+    assert "env-key-value" not in capsys.readouterr().out
+
+
+def test_ipv6_loopback_spec_installs(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    write_engine(tmp_path, "jev@http://[::1]:8000")
+    assert 'engine = "jev@http://[::1]:8000"' in (tmp_path / "guard.toml").read_text()

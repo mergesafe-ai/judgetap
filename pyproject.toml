@@ -16,6 +16,7 @@ snapjudge = "snapjudge.cli:main"
 [project.optional-dependencies]
 llm = ["litellm>=1.40"]
 laya = ["laya"]
+keychain = ["keyring>=24"]
 
 [build-system]
 requires = ["hatchling"]

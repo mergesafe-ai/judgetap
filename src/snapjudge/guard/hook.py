@@ -20,6 +20,7 @@ from typing import Any
 
 from snapjudge.guard.core import Action, Verdict, check, load_user_rules, project_rules
 from snapjudge.guard.rules import redact
+from snapjudge.secrets import get_key
 
 TRANSCRIPT_SCAN_BYTES = 2 * 1024 * 1024
 GUARDED_TOOLS = ("Bash", "Write", "Edit", "MultiEdit")
@@ -136,10 +137,10 @@ def _engine():
     from snapjudge.engines import load
 
     engine = load(spec)
-    if spec.partition(":")[0] == "jev" and not os.environ.get("TYPESAFE_API_KEY"):
+    if spec.partition(":")[0] == "jev" and not get_key("TYPESAFE_API_KEY"):
         # Caught by the caller: the guard then runs rules only, failing closed.
         raise RuntimeError(
-            "engine is jev but TYPESAFE_API_KEY isn't visible to the hook"
+            "engine is jev but TYPESAFE_API_KEY isn't in the hook's env or the keychain"
         )
     return engine
 

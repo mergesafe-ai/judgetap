@@ -145,7 +145,7 @@ def agentjev_up(
     return True
 
 
-SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+-]+")
+SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+\[\]-]+")  # [ ] for IPv6 hosts
 
 
 KNOWN_ENGINES = frozenset({"jev", "llm", "laya", "agentjev", "typesafe"})
