@@ -39,7 +39,7 @@ button { background:none; border:1px solid var(--line); color:var(--accent); bor
   <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted status" role="status">Loading…</span></p>
   <div class="tiles" id="tiles"></div>
   <section><h2>Last 30 days</h2><div class="days" id="days"></div></section>
-  <section><h2>Engines (guard judge calls and logged library calls)</h2><div class="wrap"><table id="engines"></table></div></section>
+  <section><h2>Engines (calls include every engine a cascade tried; latency is end-to-end, shown under the engine that answered)</h2><div class="wrap"><table id="engines"></table></div></section>
   <section>
     <h2>Recent decisions</h2>
     <div class="filters">

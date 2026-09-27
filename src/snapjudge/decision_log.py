@@ -45,6 +45,8 @@ def record(decisions: Sequence[Decision]) -> None:
                     "outcome": d.value,
                     "layer": "library",
                     "engine": d.engine,
+                    # Every engine consulted, for cascades (winner last).
+                    "hops": list(d.meta.get("hops") or [d.engine]),
                     "p": round(d.p, 4),
                     "latency_ms": round(d.latency_ms, 1),
                     "cost_usd": d.cost_usd,

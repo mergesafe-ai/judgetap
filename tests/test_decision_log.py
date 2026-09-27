@@ -187,3 +187,20 @@ def test_cascade_batch_counts_each_engine(tmp_path, monkeypatch):
     )
     engines = load(tmp_path)["summary"]["engines"]
     assert engines["cheap"]["calls"] == 1 and engines["strong"]["calls"] == 1
+
+
+def test_escalated_cascade_counts_every_hop(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.dashboard.data import load
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    cheap = StaticEngine(lambda q, c: {"yes": 0.5, "no": 0.5}, name="cheap")
+    strong = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="strong")
+    sj.yesno("hard", engine=sj.Cascade([cheap, strong]))
+    engines = load(tmp_path)["summary"]["engines"]
+    assert engines["cheap"]["calls"] == 1 and engines["strong"]["calls"] == 1
+    assert (
+        engines["cheap"]["p50_ms"] is None and engines["strong"]["p50_ms"] is not None
+    )

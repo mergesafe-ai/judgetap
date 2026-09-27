@@ -101,13 +101,18 @@ def _load(home: Path, today: date) -> dict[str, Any]:
             # verdicts: counted apart, kept out of hold/ask/allow and the chart.
             library += 1
             # A batch is one engine call: count it (and its latency) once.
-            key = (r.get("call") or r["id"], r.get("engine") or "")
-            if r.get("engine") and key not in seen_calls:
+            # Every engine a cascade consulted made a call; the end-to-end
+            # latency is attributed to the engine that answered.
+            for hop in r.get("hops") or ([r["engine"]] if r.get("engine") else []):
+                key = (r.get("call") or r["id"], hop)
+                if key in seen_calls:
+                    continue
                 seen_calls[key] = None
                 if len(seen_calls) > 256:
                     seen_calls.popitem(last=False)
-                by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
-                calls[r["engine"]] += 1
+                calls[hop] += 1
+                if hop == r.get("engine"):
+                    by_engine[hop].append(float(r.get("latency_ms") or 0))
             continue
         total += 1
         outcomes[r.get("outcome")] += 1
@@ -129,10 +134,10 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "engines": {
             name: {
                 "calls": calls[name],
-                "p50_ms": _rank(v, 0.5),
-                "p95_ms": _rank(v, 0.95),
+                "p50_ms": _rank(by_engine.get(name, ()), 0.5),
+                "p95_ms": _rank(by_engine.get(name, ()), 0.95),
             }
-            for name, v in sorted(by_engine.items())
+            for name in sorted(set(calls) | set(by_engine))
         },
         "per_day": {d: dict(c) for d, c in per_day.items()},
     }
