@@ -920,6 +920,8 @@ def check_path(
 # python -c, ...) is an unbounded list; a mention is not. Reading the config
 # (`cat guard.toml`) asks too: rare, and cheap to approve.
 GUARD_CONFIG_MENTION = re.compile(
+    # A whole name at both ends: myguard.toml or foo.claude/... is another file.
+    r"(?<![\w.-])"
     r"(?:guard\.toml|\.claude/settings[^\s'\"/]*\.json|\.cursor/hooks\.json"
     r"|\.codex/hooks\.json|\.codex/config\.toml)"
     # A whole name: guard.toml.example or settings.json.bak is another file.

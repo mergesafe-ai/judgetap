@@ -318,3 +318,28 @@ def test_symlink_with_equals_in_its_name_asks(tmp_path):
     (tmp_path / "alias=cfg").symlink_to(tmp_path / "guard.toml")
     assert check_command_writes("echo x >alias=cfg", tmp_path) is not None
     assert check_command_writes("dd if=x of=alias=cfg", tmp_path) is not None
+
+
+@pytest.mark.parametrize(
+    "command", ["cat myguard.toml", "cat x-guard.toml", "ls foo.claude/settings.json"]
+)
+def test_other_files_ending_in_a_config_name_do_not_ask(command, tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    assert check_command_writes(command, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat guard.toml",
+        "cat ./guard.toml",
+        "echo x >guard.toml",
+        "cp a '.claude/settings.json'",
+        "x=guard.toml",
+    ],
+)
+def test_config_name_at_a_boundary_still_asks(command, tmp_path):
+    from judgetap.guard.rules import check_command_writes
+
+    assert check_command_writes(command, tmp_path) is not None
