@@ -85,8 +85,12 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds, library, loops, stops = 0.0, 0, 0, 0, 0, 0
-    for n, r in _iter_jsonl(home / "guard.jsonl"):
-        r["id"] = record_id(r, n)
+    for n, raw in _iter_jsonl(home / "guard.jsonl"):
+        try:
+            r = _clean(raw)
+            r["id"] = record_id(r, n)
+        except Exception:  # noqa: BLE001, S112 -- one unreadable record never breaks the page
+            continue
         r["source"] = r.get("source") or "guard"
         r["false_alarm"] = r["id"] in false_alarms
         cost += r.get("cost_usd") or 0
@@ -132,6 +136,74 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     return {"summary": summary, "recent": list(recent)[::-1]}
 
 
+STR_FIELDS = (
+    "id",
+    "ts",
+    "session",
+    "source",
+    "tool",
+    "subject",
+    "outcome",
+    "layer",
+    "rule",
+    "reason",
+    "engine",
+    "error",
+    "call",
+    "batch",
+)
+NUM_FIELDS = ("cost_usd", "latency_ms")
+
+
+def _finite(value: Any) -> float | None:
+    """A finite int/float as float; anything else (str, bool, NaN, inf) is None."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _scrub(value: Any) -> Any:
+    """NaN/Infinity anywhere (even in fields the page doesn't use) become None."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return value
+
+
+def _clean(r: dict[str, Any]) -> dict[str, Any]:
+    """The log is ours but may be edited, truncated or written by an older
+    version: coerce every field the page uses to its expected type, so no
+    value can crash the summary or make the JSON invalid (NaN)."""
+    out = _scrub(dict(r))
+    for key in STR_FIELDS:
+        if key in out and not isinstance(out[key], str):
+            out[key] = None
+    for key in NUM_FIELDS:
+        if key in out:
+            out[key] = _finite(out[key])
+    if not isinstance(out.get("p"), dict):
+        out["p"] = {}
+    else:
+        out["p"] = {
+            k: v
+            for k, v in out["p"].items()
+            if isinstance(k, str) and _finite(v) is not None
+        }
+    if "calls" in out:
+        # Calls are echoed back in "recent" too: keep only well-formed ones
+        # with a finite (or absent) latency.
+        calls = out["calls"] if isinstance(out["calls"], list) else []
+        out["calls"] = [
+            {**c, "latency_ms": _finite(c.get("latency_ms"))}
+            for c in calls
+            if isinstance(c, dict) and isinstance(c.get("engine"), str)
+        ]
+    return out
+
+
 def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
     """Engine metrics come from the calls each record reports, each with its
     own latency: nothing is inferred. A batch writes its calls on one record
@@ -143,8 +215,9 @@ def _count_calls(r: dict[str, Any], calls: Counter, by_engine) -> None:
         for c in reported:
             if isinstance(c, dict) and isinstance(c.get("engine"), str):
                 calls[c["engine"]] += 1
-                if isinstance(c.get("latency_ms"), int | float):
-                    by_engine[c["engine"]].append(float(c["latency_ms"]))
+                latency = _finite(c.get("latency_ms"))
+                if latency is not None:
+                    by_engine[c["engine"]].append(latency)
         return
     if not r.get("engine") or r.get("error"):
         return

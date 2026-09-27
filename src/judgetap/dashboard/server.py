@@ -44,7 +44,10 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
             self.wfile.write(body)
 
         def _json(self, status: int, obj: object) -> None:
-            self._send(status, json.dumps(obj).encode(), "application/json")
+            # allow_nan=False: bare NaN isn't JSON and would break the page.
+            self._send(
+                status, json.dumps(obj, allow_nan=False).encode(), "application/json"
+            )
 
         def do_GET(self) -> None:
             if not self._host_ok():
@@ -94,4 +97,9 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
 def serve(home: Path, port: int = 8765) -> ThreadingHTTPServer:
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(home, token, port))
+    # Port 0 means "any free port": the Host allow-list must use the port
+    # the OS actually bound, or every request is refused.
+    bound = server.server_address[1]
+    if bound != port:
+        server.RequestHandlerClass = make_handler(home, token, bound)
     return server
