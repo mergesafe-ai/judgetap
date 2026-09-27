@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from snapjudge.guard.core import Action, check, load_user_rules, project_rules
-from snapjudge.testing import StaticEngine
+from judgetap.guard.core import Action, check, load_user_rules, project_rules
+from judgetap.testing import StaticEngine
 
 
 def judge(**p):

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 from pathlib import Path
 
-from snapjudge.errors import SnapjudgeError
+from judgetap.errors import JudgetapError
 
-HOOK_COMMAND = "snapjudge guard hook"
+HOOK_COMMAND = "judgetap guard hook"
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
 
@@ -46,12 +45,34 @@ def _write(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+OLD_HOOK_COMMAND = "snapjudge guard hook"  # written by installs before #38
+
+
 def _ours(command: str | None) -> bool:
-    """Exactly a command this installer writes; anything edited is the user's."""
+    """Exactly a command this installer writes (now or under the old name);
+    anything edited is the user's."""
     return command in {
-        HOOK_COMMAND,
-        *(f"{HOOK_COMMAND} --agent {a}" for a in ("cursor", "codex")),
+        base + suffix
+        for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
+        for suffix in ("", " --agent cursor", " --agent codex")
     }
+
+
+def _upgrade_old(data: dict) -> bool:
+    """Rewrite old-name hook commands to the new name in place."""
+    changed = False
+    for entries in data.get("hooks", {}).values():
+        for entry in entries:
+            for holder in [entry, *entry.get("hooks", [])]:
+                cmd = holder.get("command")
+                if (
+                    isinstance(cmd, str)
+                    and cmd.startswith(OLD_HOOK_COMMAND)
+                    and _ours(cmd)
+                ):
+                    holder["command"] = HOOK_COMMAND + cmd[len(OLD_HOOK_COMMAND) :]
+                    changed = True
+    return changed
 
 
 def _is_ours(entry: dict) -> bool:
@@ -71,6 +92,11 @@ def install(path: Path, agent: str = "claude-code") -> bool:
         data.setdefault("version", 1)
     entries = data.setdefault("hooks", {}).setdefault(_event(agent), [])
     if any(_is_ours(e) for e in entries):
+        if _upgrade_old(
+            data
+        ):  # an install from before the rename: point it at judgetap
+            _write(path, data)
+            return True
         return False
     command = hook_command(agent)
     if agent == "cursor":
@@ -113,13 +139,15 @@ def uninstall(path: Path, agent: str = "claude-code") -> bool:
 def detect_engine(probe=None) -> tuple[str | None, str]:
     """Pick an engine the user already has, and say why.
 
-    Order: an explicit $SNAPJUDGE_ENGINE, a TypeSafe key (Jev), a local
+    Order: an explicit $JUDGETAP_ENGINE, a TypeSafe key (Jev), a local
     AgentJev server on its default port. Nothing is downloaded and no key is
     stored: without one of these the guard runs rules only, which fail closed.
     """
-    if os.environ.get("SNAPJUDGE_ENGINE"):
-        return os.environ["SNAPJUDGE_ENGINE"], "from $SNAPJUDGE_ENGINE"
-    from snapjudge.secrets import get_key
+    from judgetap._compat import env, env_source
+
+    if env("ENGINE"):
+        return env("ENGINE"), f"from {env_source('ENGINE')}"
+    from judgetap.secrets import get_key
 
     if get_key("TYPESAFE_API_KEY"):  # env or OS keychain
         return "jev", "found TYPESAFE_API_KEY"
@@ -134,8 +162,8 @@ def agentjev_up(
 ) -> bool:
     """True only if the port speaks AgentJev's API, not just accepts a
     connection: a one-question request must come back as a decision."""
-    from snapjudge.engines.agentjev import AgentJevEngine
-    from snapjudge.types import Question
+    from judgetap.engines.agentjev import AgentJevEngine
+    from judgetap.types import Question
 
     kwargs = {"timeout": timeout} | ({"transport": transport} if transport else {})
     try:
@@ -153,20 +181,28 @@ SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+\[\]-]+")  # [ ] for IPv6 hosts
 KNOWN_ENGINES = frozenset({"jev", "llm", "laya", "agentjev", "typesafe"})
 
 
-def write_engine(home: Path, spec: str) -> Path:
-    """Record the engine in guard.toml, keeping any user rules already there."""
+def validate_engine(spec: str):
+    """Check a spec fully and return the engine it builds (no network, no key
+    needed). Raises ValueError for anything that can't be saved."""
     if not SPEC_PATTERN.fullmatch(spec):
         raise ValueError(f"not a valid engine spec: {spec!r}")
     if spec.partition(":")[0].partition("@")[0] not in KNOWN_ENGINES:
         raise ValueError(
             f"unknown engine {spec!r}; known: {', '.join(sorted(KNOWN_ENGINES))}"
         )
-    from snapjudge.engines import load  # builds the engine: no network, no key needed
+    from judgetap.engines import load
 
     try:
-        load(spec)
-    except SnapjudgeError as err:
+        return load(spec)
+    except JudgetapError as err:
         raise ValueError(str(err)) from err
+
+
+def write_engine(home: Path, spec: str, *, engine=None) -> Path:
+    """Record the engine in guard.toml, keeping any user rules already there.
+    Pass `engine` when the caller already validated the spec, to build it once."""
+    if engine is None:
+        validate_engine(spec)
     path = home / "guard.toml"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = path.read_text().splitlines() if path.exists() else []

@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.testing import StaticEngine
+import judgetap as sj
+from judgetap.testing import StaticEngine
 
 
 def fixed(dist):

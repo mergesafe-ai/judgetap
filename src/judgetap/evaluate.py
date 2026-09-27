@@ -18,10 +18,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from snapjudge.api import batch
-from snapjudge.engine import Engine
-from snapjudge.errors import SnapjudgeError
-from snapjudge.types import Question
+from judgetap.api import batch
+from judgetap.engine import Engine
+from judgetap.errors import JudgetapError
+from judgetap.types import Question
 
 BINS = 10
 
@@ -75,10 +75,10 @@ def load_cases(path: str | Path) -> list[Case]:
                         f"label {label!r} is not one of {list(q.options)!r}"
                     )
                 cases.append(Case(q, raw.get("context"), label))
-            except (KeyError, ValueError, TypeError, SnapjudgeError) as err:
-                raise SnapjudgeError(f"{path}:{n}: {err}") from err
+            except (KeyError, ValueError, TypeError, JudgetapError) as err:
+                raise JudgetapError(f"{path}:{n}: {err}") from err
     if not cases:
-        raise SnapjudgeError(f"{path} has no cases")
+        raise JudgetapError(f"{path} has no cases")
     return cases
 
 
@@ -189,10 +189,10 @@ def to_json(reports: Sequence[EngineReport]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
-    from snapjudge.engines import load
+    from judgetap.engines import load
 
     parser = argparse.ArgumentParser(
-        prog="snapjudge eval", description=__doc__.split("\n")[0]
+        prog="judgetap eval", description=__doc__.split("\n")[0]
     )
     parser.add_argument("cases", help="JSONL file of labelled cases")
     parser.add_argument(

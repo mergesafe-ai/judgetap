@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-from snapjudge.guard import hook
-from snapjudge.guard.install import HOOK_COMMAND, install, uninstall
+from judgetap.guard import hook
+from judgetap.guard.install import HOOK_COMMAND, install, uninstall
 
 
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
 
 
 def run(payload):
@@ -81,7 +81,7 @@ def test_garbage_input_never_blocks():
 
 
 def test_bad_engine_spec_degrades_to_rules_and_says_so(tmp_path, monkeypatch):
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "nonsense")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "nonsense")
     out = run(bash("make deploy", tmp_path))
     assert "systemMessage" in out
 
@@ -161,7 +161,7 @@ def test_malformed_user_config_still_runs_builtins(tmp_path):
 
 
 def test_cli_test_does_not_write_the_log(tmp_path, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.chdir(tmp_path)
     assert main(["guard", "test"]) == 0
@@ -170,7 +170,7 @@ def test_cli_test_does_not_write_the_log(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_stats_summarises_log(tmp_path, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     run(bash("git push -f", tmp_path))
     run(bash("make test", tmp_path))
@@ -180,7 +180,7 @@ def test_cli_stats_summarises_log(tmp_path, capsys):
 
 
 def test_cli_install_and_uninstall(tmp_path, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.chdir(tmp_path)
     main(["guard", "install", "--scope", "project"])
@@ -205,7 +205,7 @@ def test_uninstall_keeps_other_hooks_in_the_same_group(tmp_path):
 
 
 def test_stats_nearest_rank_percentiles(tmp_path, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     log = tmp_path / "home" / "guard.jsonl"
     log.parent.mkdir(parents=True)
@@ -225,7 +225,7 @@ def test_stats_nearest_rank_percentiles(tmp_path, capsys):
 
 
 def test_stats_skips_a_cut_off_line(tmp_path, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     log = tmp_path / "home" / "guard.jsonl"
     log.parent.mkdir(parents=True)
@@ -271,25 +271,25 @@ def test_engine_spec_from_env_then_guard_toml(tmp_path, monkeypatch):
         'engine = "agentjev"\n[[rule]]\npattern = "x"\n'
     )
     assert hook.engine_spec() == "agentjev"
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
     assert hook.engine_spec() == "jev"
 
 
 def test_detect_engine_order(monkeypatch):
-    from snapjudge.guard.install import detect_engine
+    from judgetap.guard.install import detect_engine
 
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     assert detect_engine(probe=lambda: False)[0] is None
     assert detect_engine(probe=lambda: True)[0] == "agentjev"
     monkeypatch.setenv("TYPESAFE_API_KEY", "k")
     assert detect_engine(probe=lambda: True)[0] == "jev"
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "llm:openai/x")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "llm:openai/x")
     assert detect_engine(probe=lambda: True)[0] == "llm:openai/x"
 
 
 def test_write_engine_keeps_user_rules(tmp_path):
-    from snapjudge.guard.core import load_user_rules
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.core import load_user_rules
+    from judgetap.guard.install import write_engine
 
     toml = tmp_path / "guard.toml"
     toml.write_text('engine = "old"\n[[rule]]\npattern = "kubectl"\n')
@@ -300,15 +300,15 @@ def test_write_engine_keeps_user_rules(tmp_path):
 
 
 def test_eval_subcommand_is_registered(tmp_path, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     with pytest.raises(SystemExit):
         main(["eval", "--help"])
-    assert "snapjudge eval" in capsys.readouterr().out
+    assert "judgetap eval" in capsys.readouterr().out
 
 
 def test_jev_without_key_fails_closed_and_says_so(tmp_path, monkeypatch):
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     out = run(bash("terraform apply -auto-approve", tmp_path))
     assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
@@ -318,8 +318,8 @@ def test_jev_without_key_fails_closed_and_says_so(tmp_path, monkeypatch):
 def test_judge_failure_falls_back_to_rules_only():
     from pathlib import Path
 
-    from snapjudge.guard.core import Action, check
-    from snapjudge.testing import StaticEngine
+    from judgetap.guard.core import Action, check
+    from judgetap.testing import StaticEngine
 
     class Down(StaticEngine):
         def decide(self, questions, context):
@@ -332,7 +332,7 @@ def test_judge_failure_falls_back_to_rules_only():
 
 
 def test_write_engine_rejects_unsafe_specs(tmp_path):
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.install import write_engine
 
     with pytest.raises(ValueError):
         write_engine(tmp_path, 'jev"\n[[rule]]')
@@ -340,11 +340,11 @@ def test_write_engine_rejects_unsafe_specs(tmp_path):
     write_engine(tmp_path, "agentjev:http://gpu-box:9000")
     assert (
         hook.engine_spec() is None or True
-    )  # file written under tmp_path, not SNAPJUDGE_HOME
+    )  # file written under tmp_path, not JUDGETAP_HOME
 
 
 def test_agentjev_probe_needs_the_protocol():
-    from snapjudge.guard.install import agentjev_up
+    from judgetap.guard.install import agentjev_up
 
     ok = {
         "results": [
@@ -359,8 +359,8 @@ def test_agentjev_probe_needs_the_protocol():
 
 
 def test_reinstall_keeps_existing_engine(tmp_path, monkeypatch, capsys):
-    from snapjudge import cli
-    from snapjudge.guard import install as inst
+    from judgetap import cli
+    from judgetap.guard import install as inst
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
@@ -372,7 +372,7 @@ def test_reinstall_keeps_existing_engine(tmp_path, monkeypatch, capsys):
 
 
 def test_reinstall_keeps_chosen_engine_unless_detect(tmp_path, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "home").mkdir(exist_ok=True)
@@ -385,7 +385,7 @@ def test_reinstall_keeps_chosen_engine_unless_detect(tmp_path, monkeypatch, caps
 
 
 def test_write_engine_keeps_similar_keys_and_rejects_unknown(tmp_path):
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.install import write_engine
 
     toml = tmp_path / "guard.toml"
     toml.write_text('engine = "old"\nengine_options = "strict"\n')
@@ -396,16 +396,16 @@ def test_write_engine_keeps_similar_keys_and_rejects_unknown(tmp_path):
 
 
 def test_install_persists_env_engine(tmp_path, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "agentjev")
     main(["guard", "install", "--scope", "project"])
     assert 'engine = "agentjev"' in (tmp_path / "home" / "guard.toml").read_text()
 
 
 def test_write_engine_keeps_table_scoped_engine_and_validates_fully(tmp_path):
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.install import write_engine
 
     toml = tmp_path / "guard.toml"
     toml.write_text('engine = "old"\n[custom]\nengine = "keep-me"\n')
@@ -414,3 +414,55 @@ def test_write_engine_keeps_table_scoped_engine_and_validates_fully(tmp_path):
     assert text.startswith('engine = "jev"') and 'engine = "keep-me"' in text
     with pytest.raises(ValueError):
         write_engine(tmp_path, "llm")  # a known name but no model
+
+
+def test_old_snapjudge_settings_still_work(tmp_path, monkeypatch):
+    from judgetap import _compat
+    from judgetap.guard.install import HOOK_COMMAND, install
+
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    assert _compat.env("ENGINE") == "agentjev"
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
+    assert _compat.env("ENGINE") == "jev"  # the new name wins
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    (tmp_path / ".snapjudge").mkdir()
+    assert _compat.default_home() == tmp_path / ".snapjudge"
+    (tmp_path / ".judgetap").mkdir()
+    assert _compat.default_home() == tmp_path / ".judgetap"
+
+    settings = tmp_path / "settings.json"
+    old = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "snapjudge guard hook"}],
+                }
+            ]
+        }
+    }
+    settings.write_text(json.dumps(old))
+    assert install(settings) is True  # upgraded in place
+    cmds = [
+        h["command"]
+        for e in json.loads(settings.read_text())["hooks"]["PreToolUse"]
+        for h in e["hooks"]
+    ]
+    assert cmds == [HOOK_COMMAND]
+    assert install(settings) is False
+
+
+def test_legacy_compat_surface(tmp_path, monkeypatch):
+    import judgetap
+    from judgetap.cascade import from_config
+    from judgetap.guard.install import detect_engine
+
+    assert judgetap.SnapjudgeError is judgetap.JudgetapError
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "snapjudge.toml").write_text('[cascade]\norder = ["jev"]\n')
+    assert [e.name for e in from_config().engines] == ["jev"]
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
+    monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
+    assert detect_engine(probe=lambda: False) == ("agentjev", "from $SNAPJUDGE_ENGINE")

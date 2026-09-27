@@ -2,58 +2,55 @@
 
 load("jev")                       -> TypeSafe Jev (TYPESAFE_API_KEY)
 load("jev:jev-1.13.0")            -> Jev pinned to a model version
-load("llm:openai/gpt-4o-mini")    -> any LiteLLM model (pip install snapjudge[llm])
+load("llm:openai/gpt-4o-mini")    -> any LiteLLM model (pip install judgetap[llm])
 """
 
 from __future__ import annotations
 
-import os
+from judgetap._compat import env
+from judgetap.engine import Engine
+from judgetap.errors import JudgetapError
 
-from snapjudge.engine import Engine
-from snapjudge.errors import SnapjudgeError
-
-ENV_VAR = "SNAPJUDGE_ENGINE"
+ENV_VAR = "JUDGETAP_ENGINE"  # SNAPJUDGE_ENGINE still read for one release
 
 
 def load(spec: str | None = None) -> Engine:
-    """Build an engine from a spec string, or from $SNAPJUDGE_ENGINE."""
-    spec = spec or os.environ.get(ENV_VAR)
+    """Build an engine from a spec string, or from $JUDGETAP_ENGINE."""
+    spec = spec or env("ENGINE")
     if not spec:
-        raise SnapjudgeError(f"no engine spec given and ${ENV_VAR} is not set")
+        raise JudgetapError(f"no engine spec given and ${ENV_VAR} is not set")
     if spec.startswith("jev@"):
-        from snapjudge.engines.jev import JevEngine
+        from judgetap.engines.jev import JevEngine
 
         return JevEngine(base_url=spec[len("jev@") :])
     name, _, arg = spec.partition(":")
     if name == "typesafe":
         if not arg:
-            raise SnapjudgeError(
+            raise JudgetapError(
                 "typesafe engine needs a URL, e.g. typesafe:http://127.0.0.1:8000"
             )
-        from snapjudge.engines.jev import JevEngine
+        from judgetap.engines.jev import JevEngine
 
         return JevEngine(base_url=arg)
     if name == "jev":
-        from snapjudge.engines.jev import JevEngine
+        from judgetap.engines.jev import JevEngine
 
         return JevEngine(model=arg or "jev-latest")
     if name == "llm":
         if not arg:
-            raise SnapjudgeError(
-                "llm engine needs a model, e.g. llm:openai/gpt-4o-mini"
-            )
-        from snapjudge.engines.llm import LLMEngine
+            raise JudgetapError("llm engine needs a model, e.g. llm:openai/gpt-4o-mini")
+        from judgetap.engines.llm import LLMEngine
 
         return LLMEngine(model=arg)
     if name == "laya":
-        from snapjudge.engines.laya import DEFAULT_MODEL, LayaEngine
+        from judgetap.engines.laya import DEFAULT_MODEL, LayaEngine
 
         return LayaEngine(model=arg or DEFAULT_MODEL)
     if name == "agentjev":
-        from snapjudge.engines.agentjev import DEFAULT_URL, AgentJevEngine
+        from judgetap.engines.agentjev import DEFAULT_URL, AgentJevEngine
 
         return AgentJevEngine(url=arg or DEFAULT_URL)
-    raise SnapjudgeError(
+    raise JudgetapError(
         f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev"
     )
 

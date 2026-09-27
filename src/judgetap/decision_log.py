@@ -1,6 +1,6 @@
 """Opt-in log of library decisions, in the guard log's format.
 
-Written to the same file the guard uses, so `snapjudge dashboard` shows
+Written to the same file the guard uses, so `judgetap dashboard` shows
 both. Only the question text (redacted) and the answer are recorded, never
 the context passed with it.
 """
@@ -13,21 +13,22 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from snapjudge.types import Decision
+from judgetap._compat import env
+from judgetap.types import Decision
 
-ENV_VAR = "SNAPJUDGE_LOG"
+ENV_VAR = "JUDGETAP_LOG"  # SNAPJUDGE_LOG still read for one release
 
 
 def enabled(configured: bool) -> bool:
-    return configured or os.environ.get(ENV_VAR, "").lower() in ("1", "true", "yes")
+    return configured or (env("LOG") or "").lower() in ("1", "true", "yes")
 
 
 def record(decisions: Sequence[Decision]) -> None:
     """Append one line per decision. Never raises: logging must not break
     the caller's decision."""
     try:
-        from snapjudge.guard.hook import home
-        from snapjudge.guard.rules import redact
+        from judgetap.guard.hook import home
+        from judgetap.guard.rules import redact
 
         path = home() / "guard.jsonl"
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

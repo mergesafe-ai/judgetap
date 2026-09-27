@@ -11,15 +11,15 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer
-from snapjudge.engines.jev import Transport, _urllib_transport
-from snapjudge.errors import SnapjudgeError
-from snapjudge.types import NO, YES, Question
+from judgetap.engine import Context, RawAnswer
+from judgetap.engines.jev import Transport, _urllib_transport
+from judgetap.errors import JudgetapError
+from judgetap.types import NO, YES, Question
 
 DEFAULT_URL = "http://127.0.0.1:8149"
 
 
-class AgentJevError(SnapjudgeError):
+class AgentJevError(JudgetapError):
     """The AgentJev server is unreachable, failed, or answered unexpectedly."""
 
 

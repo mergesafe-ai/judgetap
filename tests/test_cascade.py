@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.testing import StaticEngine
+import judgetap as sj
+from judgetap.testing import StaticEngine
 
 
 def eng(name, p_yes):
@@ -108,7 +108,7 @@ def test_async_cascade():
     "kwargs", [{"engines": []}, {"engines": [eng("a", 1)], "escalate_below": 1.5}]
 )
 def test_bad_cascade_config(kwargs):
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         sj.Cascade(**kwargs)
 
 
@@ -177,9 +177,9 @@ def test_cost_is_unknown_when_any_answering_engine_is_unpriced():
 
 
 def test_from_config_builds_cascade(tmp_path):
-    from snapjudge.cascade import from_config
+    from judgetap.cascade import from_config
 
-    cfg = tmp_path / "snapjudge.toml"
+    cfg = tmp_path / "judgetap.toml"
     cfg.write_text(
         '[cascade]\norder = ["jev", "llm:openai/x"]\nescalate_below = 0.7\non_exhausted = "return_last"\n'
     )
@@ -197,11 +197,11 @@ def test_from_config_builds_cascade(tmp_path):
     ],
 )
 def test_from_config_rejects_bad_files(tmp_path, body):
-    from snapjudge.cascade import from_config
+    from judgetap.cascade import from_config
 
-    cfg = tmp_path / "snapjudge.toml"
+    cfg = tmp_path / "judgetap.toml"
     cfg.write_text(body)
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         from_config(cfg)
 
 
@@ -214,18 +214,18 @@ def test_from_config_rejects_bad_files(tmp_path, body):
     ],
 )
 def test_from_config_type_errors_name_the_setting(tmp_path, body):
-    from snapjudge.cascade import from_config
+    from judgetap.cascade import from_config
 
-    cfg = tmp_path / "snapjudge.toml"
+    cfg = tmp_path / "judgetap.toml"
     cfg.write_text(body)
-    with pytest.raises(sj.SnapjudgeError, match="cascade\\."):
+    with pytest.raises(sj.JudgetapError, match="cascade\\."):
         from_config(cfg)
 
 
 def test_from_config_scalar_cascade_is_a_config_error(tmp_path):
-    from snapjudge.cascade import from_config
+    from judgetap.cascade import from_config
 
-    cfg = tmp_path / "snapjudge.toml"
+    cfg = tmp_path / "judgetap.toml"
     cfg.write_text('cascade = "jev"\n')
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         from_config(cfg)

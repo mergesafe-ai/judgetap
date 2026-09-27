@@ -8,9 +8,9 @@ Set Height 420
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 40ms
 
-Type 'snapjudge guard test "git push --force origin main"'
+Type 'judgetap guard test "git push --force origin main"'
 Enter
 Sleep 2s
-Type 'snapjudge guard test "rm -rf ~/projects"'
+Type 'judgetap guard test "rm -rf ~/projects"'
 Enter
 Sleep 3s

@@ -2,9 +2,6 @@
 
 Thanks for helping. judgetap is small, so the process is too.
 
-> The code is still named `snapjudge` (package, imports, CLI); the rename to
-> `judgetap` is tracked in #38.
-
 ## Setup
 
 Python 3.12+ and [uv](https://docs.astral.sh/uv/).

@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.engines import load
-from snapjudge.engines.jev import JevEngine, JevError
+import judgetap as sj
+from judgetap.engines import load
+from judgetap.engines.jev import JevEngine, JevError
 
 # Shapes from docs.typesafe.ai/api.
 RESPONSE = {
@@ -109,11 +109,11 @@ def test_load_specs(monkeypatch):
     assert load("jev").model == "jev-latest"
     assert load("jev:jev-1.13.0").model == "jev-1.13.0"
     assert load("llm:openai/gpt-4o-mini").name == "llm:openai/gpt-4o-mini"
-    monkeypatch.setenv("SNAPJUDGE_ENGINE", "jev")
+    monkeypatch.setenv("JUDGETAP_ENGINE", "jev")
     assert load().name == "jev"
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         load("nope")
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         load("llm")
 
 
@@ -131,7 +131,7 @@ def test_mapping_context_is_sent_as_plain_json():
 
 
 def test_plain_context_keeps_json_values_and_stringifies_the_rest():
-    from snapjudge.engine import plain_context
+    from judgetap.engine import plain_context
 
     ctx = {"n": 1, "ok": True, "nested": {"xs": [1, "a", None]}, "obj": object}
     out = plain_context(ctx)
@@ -142,7 +142,7 @@ def test_plain_context_keeps_json_values_and_stringifies_the_rest():
 def test_plain_context_stringifies_non_finite_floats():
     import json as _json
 
-    from snapjudge.engine import plain_context
+    from judgetap.engine import plain_context
 
     out = plain_context({"a": float("nan"), "b": [float("inf")]})
     _json.dumps(out, allow_nan=False)  # strict JSON
@@ -191,7 +191,7 @@ def test_url_specs():
     assert load("jev@http://localhost:8000").base_url == "http://localhost:8000"
     assert load("typesafe:http://127.0.0.1:9000").name == "typesafe@127.0.0.1:9000"
     assert load("jev").name == "jev"
-    with pytest.raises(sj.SnapjudgeError):
+    with pytest.raises(sj.JudgetapError):
         load("typesafe")
 
 
@@ -214,7 +214,7 @@ def test_local_http_is_allowed():
 
 
 def test_write_engine_accepts_url_specs(tmp_path):
-    from snapjudge.guard.install import write_engine
+    from judgetap.guard.install import write_engine
 
     write_engine(tmp_path, "jev@http://127.0.0.1:8000")
     write_engine(tmp_path, "typesafe:https://gw.example")

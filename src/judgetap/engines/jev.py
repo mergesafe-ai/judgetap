@@ -11,10 +11,10 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from snapjudge.engine import Context, RawAnswer, plain_context
-from snapjudge.errors import SnapjudgeError
-from snapjudge.secrets import get_key
-from snapjudge.types import YES, Question
+from judgetap.engine import Context, RawAnswer, plain_context
+from judgetap.errors import JudgetapError
+from judgetap.secrets import get_key
+from judgetap.types import YES, Question
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 API_PATH = "/v1/systemone"
@@ -26,7 +26,7 @@ RETRY_STATUSES = frozenset({429, 529})
 Transport = Callable[[str, dict[str, str], bytes, float], tuple[int, bytes]]
 
 
-class JevError(SnapjudgeError):
+class JevError(JudgetapError):
     """Jev rejected or failed a request."""
 
 
@@ -115,7 +115,7 @@ class JevEngine:
     ) -> Sequence[RawAnswer]:
         if not self._api_key and not self.local:
             raise JevError(
-                "no Jev API key: set TYPESAFE_API_KEY, save it with `snapjudge keys set "
+                "no Jev API key: set TYPESAFE_API_KEY, save it with `judgetap keys set "
                 "TYPESAFE_API_KEY`, or pass api_key="
             )
         ids = [f"q{i}" for i in range(len(questions))]

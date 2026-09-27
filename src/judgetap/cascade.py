@@ -15,15 +15,16 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
-from snapjudge.api import validate_answer
-from snapjudge.engine import Context, Engine, RawAnswer
-from snapjudge.errors import SnapjudgeError
-from snapjudge.types import Question
+from judgetap.api import validate_answer
+from judgetap.engine import Context, Engine, RawAnswer
+from judgetap.errors import JudgetapError
+from judgetap.types import Question
 
-CONFIG_FILE = "snapjudge.toml"
+CONFIG_FILE = "judgetap.toml"
+OLD_CONFIG_FILE = "snapjudge.toml"
 
 
-class CascadeExhaustedError(SnapjudgeError):
+class CascadeExhaustedError(JudgetapError):
     """No engine answered a question with enough confidence."""
 
 
@@ -48,9 +49,9 @@ class Cascade:
 
     def __post_init__(self) -> None:
         if not self.engines:
-            raise SnapjudgeError("a cascade needs at least one engine")
+            raise JudgetapError("a cascade needs at least one engine")
         if not 0 <= self.escalate_below <= 1:
-            raise SnapjudgeError("escalate_below must be between 0 and 1")
+            raise JudgetapError("escalate_below must be between 0 and 1")
 
     def decide(
         self, questions: Sequence[Question], context: Context
@@ -100,7 +101,7 @@ class Cascade:
                 raise answers
             answers = list(answers)
             if len(answers) != len(pending):
-                raise SnapjudgeError(
+                raise JudgetapError(
                     f"{engine.name} returned {len(answers)} answers for {len(pending)} questions"
                 )
         except Exception as err:  # noqa: BLE001 -- a malformed batch counts as no answer
@@ -155,7 +156,7 @@ def _as_result(
 
 
 def from_config(path: str | Path | None = None) -> Cascade:
-    """Build a cascade from the [cascade] table of snapjudge.toml.
+    """Build a cascade from the [cascade] table of judgetap.toml.
 
     [cascade]
     order = ["jev", "llm:gemini/gemini-2.0-flash-lite"]
@@ -165,23 +166,29 @@ def from_config(path: str | Path | None = None) -> Cascade:
     A callback for on_exhausted can't be written in TOML; set it in code
     with `Cascade(..., on_exhausted=fn)` or `replace(from_config(), on_exhausted=fn)`.
     """
-    from snapjudge.engines import load
+    from judgetap.engines import load
 
+    if (
+        path is None
+        and not Path(CONFIG_FILE).exists()
+        and Path(OLD_CONFIG_FILE).exists()
+    ):
+        path = OLD_CONFIG_FILE  # the pre-rename name, read for one release
     path = Path(path or CONFIG_FILE)
     with path.open("rb") as fh:
         table = tomllib.load(fh).get("cascade")
     if not isinstance(table, dict) or not table.get("order"):
-        raise SnapjudgeError(f"{path} has no [cascade] table with an order list")
+        raise JudgetapError(f"{path} has no [cascade] table with an order list")
     on_exhausted = table.get("on_exhausted", "raise")
     if on_exhausted not in ("raise", "return_last"):
-        raise SnapjudgeError(
+        raise JudgetapError(
             "on_exhausted in a config file must be 'raise' or 'return_last'"
         )
     order, threshold = table["order"], table.get("escalate_below", 0.8)
     if not isinstance(order, list) or not all(isinstance(s, str) for s in order):
-        raise SnapjudgeError(f"{path}: cascade.order must be a list of engine specs")
+        raise JudgetapError(f"{path}: cascade.order must be a list of engine specs")
     if isinstance(threshold, bool) or not isinstance(threshold, int | float):
-        raise SnapjudgeError(
+        raise JudgetapError(
             f"{path}: cascade.escalate_below must be a number, got {threshold!r}"
         )
     return Cascade(

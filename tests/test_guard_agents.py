@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-from snapjudge.guard import hook
-from snapjudge.guard.install import HOOK_COMMAND, install, settings_path, uninstall
+from judgetap.guard import hook
+from judgetap.guard.install import HOOK_COMMAND, install, settings_path, uninstall
 
 
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
-    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("SNAPJUDGE_ENGINE", raising=False)
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
 
 
 def run(payload, agent):
@@ -102,7 +102,7 @@ def test_codex_install_uses_shell_matcher(tmp_path):
 
 
 def test_cli_install_all_detects_agents(tmp_path, monkeypatch, capsys):
-    from snapjudge.cli import main
+    from judgetap.cli import main
 
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / ".cursor").mkdir()

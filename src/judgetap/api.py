@@ -7,10 +7,10 @@ import math
 import time
 from collections.abc import Sequence
 
-from snapjudge import decision_log
-from snapjudge.engine import Context, Engine, RawAnswer
-from snapjudge.errors import InvalidAnswerError, NoEngineError
-from snapjudge.types import Decision, Question
+from judgetap import decision_log
+from judgetap.engine import Context, Engine, RawAnswer
+from judgetap.errors import InvalidAnswerError, NoEngineError
+from judgetap.types import Decision, Question
 
 # Probabilities within this distance of summing to 1 are renormalised;
 # anything further off is an engine bug and is rejected.
@@ -24,8 +24,8 @@ def configure(engine: Engine | None, *, log: bool = False) -> None:
     """Set the process-wide default engine; None clears it.
 
     A call's own `engine=` argument always takes precedence. With `log=True`
-    (or SNAPJUDGE_LOG=1) each decision is appended to the local decision log
-    that `snapjudge dashboard` reads; the context is never logged.
+    (or JUDGETAP_LOG=1) each decision is appended to the local decision log
+    that `judgetap dashboard` reads; the context is never logged.
     """
     global _default_engine, _log
     _default_engine = engine
@@ -52,7 +52,7 @@ def _resolve(engine: Engine | None) -> Engine:
     chosen = engine if engine is not None else _default_engine
     if chosen is None:
         raise NoEngineError(
-            "no engine configured: call snapjudge.configure(engine) "
+            "no engine configured: call judgetap.configure(engine) "
             "or pass engine= to the call"
         )
     return chosen

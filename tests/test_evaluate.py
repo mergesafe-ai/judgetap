@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.evaluate import evaluate, load_cases, main, to_json, to_markdown
-from snapjudge.testing import StaticEngine
+import judgetap as sj
+from judgetap.evaluate import evaluate, load_cases, main, to_json, to_markdown
+from judgetap.testing import StaticEngine
 
 
 def write_cases(tmp_path, rows):
@@ -57,7 +57,7 @@ def test_load_cases_all_kinds(tmp_path):
     ],
 )
 def test_bad_case_names_the_line(tmp_path, row):
-    with pytest.raises(sj.SnapjudgeError, match=r"cases.jsonl:2"):
+    with pytest.raises(sj.JudgetapError, match=r"cases.jsonl:2"):
         load_cases(write_cases(tmp_path, [ROWS[0], row]))
 
 
@@ -119,7 +119,7 @@ def test_reports_render(tmp_path):
 
 
 def test_cli_runs_named_engines(tmp_path, monkeypatch, capsys):
-    from snapjudge import engines
+    from judgetap import engines
 
     monkeypatch.setattr(
         engines,
@@ -134,7 +134,7 @@ def test_cli_runs_named_engines(tmp_path, monkeypatch, capsys):
 
 
 def test_percentile_interpolates():
-    from snapjudge.evaluate import percentile
+    from judgetap.evaluate import percentile
 
     assert percentile([10, 100], 0.5) == 55
     assert percentile([10, 20, 30, 40], 0.95) == pytest.approx(38.5)
@@ -142,7 +142,7 @@ def test_percentile_interpolates():
 
 
 def test_string_options_line_is_rejected(tmp_path):
-    with pytest.raises(sj.SnapjudgeError, match="must be a JSON list"):
+    with pytest.raises(sj.JudgetapError, match="must be a JSON list"):
         load_cases(
             write_cases(
                 tmp_path,

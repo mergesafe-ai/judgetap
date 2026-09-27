@@ -9,18 +9,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 
-from snapjudge.dashboard.data import load, mark_false_alarm
+from judgetap.dashboard.data import load, mark_false_alarm
 
 MAX_BODY = 4096
 
 
 def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandler]:
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
-    page = files("snapjudge.dashboard").joinpath("page.html").read_text()
+    page = files("judgetap.dashboard").joinpath("page.html").read_text()
     page = page.replace("__TOKEN__", token)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "snapjudge"
+        server_version = "judgetap"
 
         def log_message(self, *args) -> None:  # keep the terminal quiet
             pass
@@ -61,7 +61,7 @@ def make_handler(home: Path, token: str, port: int) -> type[BaseHTTPRequestHandl
             # The token is only in the page this server rendered, so another
             # site can't forge the request.
             if not secrets.compare_digest(
-                self.headers.get("X-Snapjudge-Token", ""), token
+                self.headers.get("X-Judgetap-Token", ""), token
             ):
                 return self._json(403, {"error": "bad token"})
             if self.path != "/api/false-alarm":

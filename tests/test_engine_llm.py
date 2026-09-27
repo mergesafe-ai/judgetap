@@ -5,8 +5,8 @@ import types
 
 import pytest
 
-import snapjudge as sj
-from snapjudge.engines.llm import LLMEngine, LLMError
+import judgetap as sj
+from judgetap.engines.llm import LLMEngine, LLMError
 
 
 def reply(content):
@@ -62,5 +62,5 @@ def test_out_of_set_reply_is_rejected_by_core(fake_litellm):
 
 def test_missing_litellm_explains_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "litellm", None)
-    with pytest.raises(LLMError, match=r"snapjudge\[llm\]"):
+    with pytest.raises(LLMError, match=r"judgetap\[llm\]"):
         sj.yesno("q", engine=LLMEngine("openai/x"))

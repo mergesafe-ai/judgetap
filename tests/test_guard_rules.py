@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from snapjudge.guard.rules import check_command, check_content
+from judgetap.guard.rules import check_command, check_content
 
 WS = Path("/work/repo")
 
@@ -90,14 +90,14 @@ def test_cd_within_workspace_is_followed():
     ],
 )
 def test_redact_masks_credentials_in_commands(command, leak):
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     out = redact(command)
     assert leak not in out and "[REDACTED]" in out
 
 
 def test_redact_leaves_ordinary_commands_alone():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert redact("git push origin feat/x") == "git push origin feat/x"
 
@@ -150,7 +150,7 @@ def test_wrapper_flags_and_git_globals(command, rule):
 
 
 def test_header_credentials_are_redacted():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     out = redact("curl -H 'X-API-Key: topsecret' -H 'Cookie: sid=abc' https://api")
     assert "topsecret" not in out and "sid=abc" not in out
@@ -214,7 +214,7 @@ def test_every_secret_detector(content):
 
 
 def test_json_credentials_are_redacted():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     out = redact("""curl -d '{"password":"hunter2","api_key": "k-123"}' https://api""")
     assert "hunter2" not in out and "k-123" not in out
@@ -253,7 +253,7 @@ def test_truncate_rule():
 
 
 def test_current_branch_reads_git_head(tmp_path):
-    from snapjudge.guard.rules import current_branch
+    from judgetap.guard.rules import current_branch
 
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
@@ -265,7 +265,7 @@ def test_current_branch_reads_git_head(tmp_path):
 
 
 def test_current_branch_follows_worktree_gitdir(tmp_path):
-    from snapjudge.guard.rules import current_branch
+    from judgetap.guard.rules import current_branch
 
     real = tmp_path / "repo.git" / "worktrees" / "wt"
     real.mkdir(parents=True)
@@ -311,7 +311,7 @@ def test_opaque_but_harmless_is_not_flagged():
 
 
 def test_unreadable_git_file_is_unknown_branch(tmp_path):
-    from snapjudge.guard.rules import current_branch
+    from judgetap.guard.rules import current_branch
 
     gitfile = tmp_path / ".git"
     gitfile.write_text("gitdir: /nowhere")
@@ -372,7 +372,7 @@ def test_plain_push_checks_the_upstream_branch(tmp_path):
     ],
 )
 def test_rules_only_mode_fails_closed(command, expect):
-    from snapjudge.guard.rules import rules_only_check
+    from judgetap.guard.rules import rules_only_check
 
     hit = rules_only_check(command)
     assert (hit[0] if hit else None) == expect
@@ -394,7 +394,7 @@ def test_rules_only_mode_fails_closed(command, expect):
     ],
 )
 def test_rules_only_round9(command, expect):
-    from snapjudge.guard.rules import rules_only_check
+    from judgetap.guard.rules import rules_only_check
 
     hit = rules_only_check(command)
     assert (hit[0] if hit else None) == expect
@@ -433,13 +433,13 @@ def test_push_config_we_do_not_model_asks(tmp_path):
     ],
 )
 def test_redact_round2_carriers(command, leak):
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert leak not in redact(command)
 
 
 def test_redact_keeps_harmless_u_flags():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert redact("git add -u") == "git add -u"
     assert (
@@ -468,7 +468,7 @@ def test_stripe_test_key_in_writes_does_not_hold():
     "command", ["git clean -fdx", "git clean -dxf", "git clean -d -f"]
 )
 def test_combined_clean_flags(command):
-    from snapjudge.guard.rules import rules_only_check
+    from judgetap.guard.rules import rules_only_check
 
     hit = check_command(command, WS) or rules_only_check(command)
     assert hit is not None and hit[0] in ("ask", "hold")
@@ -553,7 +553,7 @@ def test_push_config_case_and_remote_pushdefault(tmp_path, monkeypatch, config):
     ],
 )
 def test_redact_round3(command, leak):
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert leak not in redact(command)
 
@@ -586,25 +586,25 @@ def test_pushdefault_outside_remote_is_ignored(tmp_path, monkeypatch):
     ],
 )
 def test_basic_auth_scanner(command, leak):
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert leak not in redact(command)
 
 
 def test_colon_operands_outside_http_clients_are_kept():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert redact("sort -u 'file:with-colon'") == "sort -u 'file:with-colon'"
 
 
 def test_tab_after_user_flag_is_redacted():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     assert "secret" not in redact("curl -u\tbob:secret https://x")
 
 
 def test_only_http_client_segments_are_scanned():
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     out = redact("curl -u bob:pw https://x; sort -u file:x")
     assert "pw" not in out and out.endswith("sort -u file:x")
@@ -619,7 +619,7 @@ def test_only_http_client_segments_are_scanned():
     ],
 )
 def test_separators_inside_quoted_credentials(command):
-    from snapjudge.guard.rules import redact
+    from judgetap.guard.rules import redact
 
     out = redact(command)
     assert "bob" not in out and "ss" not in out.split("https")[0].replace(

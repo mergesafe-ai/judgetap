@@ -18,15 +18,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from snapjudge.guard.core import Action, Verdict, check, load_user_rules, project_rules
-from snapjudge.guard.rules import redact
+from judgetap._compat import default_home, env
+from judgetap.guard.core import Action, Verdict, check, load_user_rules, project_rules
+from judgetap.guard.rules import redact
 
 TRANSCRIPT_SCAN_BYTES = 2 * 1024 * 1024
 GUARDED_TOOLS = ("Bash", "Write", "Edit", "MultiEdit")
 
 
 def home() -> Path:
-    return Path(os.environ.get("SNAPJUDGE_HOME", Path.home() / ".snapjudge"))
+    configured = env("HOME")
+    return Path(configured) if configured else default_home()
 
 
 def action_from_hook(payload: dict[str, Any]) -> Action | None:
@@ -111,16 +113,16 @@ def last_user_message(transcript_path: str | None) -> str | None:
 
 
 def engine_spec() -> str | None:
-    """$SNAPJUDGE_ENGINE, else `engine` in ~/.snapjudge/guard.toml.
+    """$JUDGETAP_ENGINE, else `engine` in ~/.judgetap/guard.toml.
 
     The file matters because agents often run hooks without the user's
     shell environment, so an exported variable may never reach the hook.
     """
-    return os.environ.get("SNAPJUDGE_ENGINE") or saved_engine()
+    return env("ENGINE") or saved_engine()
 
 
 def saved_engine() -> str | None:
-    """`engine` from ~/.snapjudge/guard.toml only, ignoring the environment."""
+    """`engine` from ~/.judgetap/guard.toml only, ignoring the environment."""
     path = home() / "guard.toml"
     if not path.is_file():
         return None
@@ -133,7 +135,7 @@ def _engine():
     spec = engine_spec()
     if not spec:
         return None
-    from snapjudge.engines import load
+    from judgetap.engines import load
 
     engine = load(spec)
     # The engine looked the key up once when built; reuse that, don't hit the
@@ -199,7 +201,7 @@ def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
 
 
 def _reason(verdict: Verdict) -> str:
-    reason = f"snapjudge guard: {verdict.reason}"
+    reason = f"judgetap guard: {verdict.reason}"
     if verdict.outcome == "hold":
         reason += ". If it is really needed, explain why and ask the user to run it."
     return reason
@@ -210,7 +212,7 @@ def respond(
 ) -> tuple[dict[str, Any] | None, int, str]:
     """(stdout JSON or None, exit code, stderr text) for this agent."""
     note = (
-        f"snapjudge guard: {verdict.reason} ({verdict.error})" if verdict.error else ""
+        f"judgetap guard: {verdict.reason} ({verdict.error})" if verdict.error else ""
     )
     if agent == "cursor":
         # Cursor treats missing or invalid JSON on a permission hook as a
@@ -270,7 +272,7 @@ def run(
                     pass
             out, code, err_text = respond(verdict, agent)
     except Exception as err:  # noqa: BLE001 -- never break the agent, always say so
-        message = f"snapjudge guard failed and allowed the action: {err}"
+        message = f"judgetap guard failed and allowed the action: {err}"
         out = (
             {"permission": "allow", "user_message": message}
             if agent == "cursor"
