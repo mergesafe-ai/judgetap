@@ -67,6 +67,7 @@ A pre-action hook for coding agents, built on the core.
 - **Outcomes**: allow (silent), hold (block with a reason the agent reads and re-plans from), ask (escalate to the user). Holds should be rare; the target is under 5 per 1,000 calls.
 - **Fails safe and visibly**: Claude Code treats a crashing hook as non-blocking, so the guard catches its own errors, applies the rules layer alone, and says so.
 - **Log**: every decision to a local JSONL, so `judgetap guard stats` can report holds and cost. Marking a hold as a false alarm comes with the dashboard (#10).
+- **Loop detection** (Claude Code `PostToolUse`, no model): the same action failing with the same error (numbers ignored) 3 times in the last 8 actions adds `additionalContext` telling the agent to re-plan; a success of that action resets the count. Never blocks. Per-session ring buffer of 20 redacted actions and error hashes in `~/.judgetap/sessions/`, 0600. Logged as layer `loop`, outcome `note`.
 
 ## Decided: the guard's default engine (#8)
 

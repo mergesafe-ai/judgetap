@@ -12,6 +12,12 @@ from collections import Counter
 from pathlib import Path
 
 
+def _guard_post(args) -> int:
+    from judgetap.guard.loop import run
+
+    return run()
+
+
 def _guard_hook(args) -> int:
     from judgetap.guard.hook import run
 
@@ -148,8 +154,8 @@ def _guard_stats(args) -> int:
                 r = json.loads(line)
             except ValueError:
                 continue  # a line cut off by a concurrent write
-            if r.get("source") == "library":
-                continue  # library decisions share the log but aren't guarded calls
+            if r.get("source") == "library" or r.get("layer") == "loop":
+                continue  # library decisions and loop notes share the log but aren't guarded calls
             total += 1
             outcomes[r["outcome"]] += 1
             layers[r["layer"]] += 1
@@ -276,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
     )
     hook.set_defaults(func=_guard_hook)
+    gsub.add_parser(
+        "post", help="run as Claude Code's PostToolUse hook (loop detection)"
+    ).set_defaults(func=_guard_post)
     for name, func in (("install", _guard_install), ("uninstall", _guard_uninstall)):
         p = gsub.add_parser(name, help=f"{name} the Claude Code hook")
         p.add_argument(
