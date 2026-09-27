@@ -78,12 +78,15 @@ jobs:
       - name: Set a dev version for the next patch
         # 0.1.0 on main -> 0.1.1.dev<run number>: sorts after the last release
         # and before the next one, and is unique per run.
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           uv run --no-project python - <<'EOF'
-          import json, re, pathlib
+          import json, os, re, pathlib
+          run = int(os.environ["RUN_NUMBER"])
           current = json.load(open(".release-please-manifest.json"))["."]
           major, minor, patch = (int(x) for x in current.split("."))
-          dev = f"{major}.{minor}.{patch + 1}.dev${{ github.run_number }}"
+          dev = f"{major}.{minor}.{patch + 1}.dev{run}"
           p = pathlib.Path("pyproject.toml")
           p.write_text(re.sub(r'^version = ".*?"', f'version = "{dev}"', p.read_text(), count=1, flags=re.M))
           i = pathlib.Path("src/judgetap/__init__.py")
