@@ -370,3 +370,10 @@ def test_outcome_filter_is_built_from_records(server):
         b"function outcomeOptions" in page
         and b'<select id="f-outcome"><option value="">All</option></select>' in page
     )
+
+
+def test_filters_offer_library_layer_and_source_aware_outcomes(server):
+    base, _ = server
+    page = call(base + "/")[1]
+    assert b"<option>library</option></select>" in page
+    assert b'src === "library" ? [] : ["hold", "ask", "allow"]' in page
