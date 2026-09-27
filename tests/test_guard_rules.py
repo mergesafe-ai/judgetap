@@ -574,3 +574,24 @@ def test_pushdefault_outside_remote_is_ignored(tmp_path, monkeypatch):
     ):
         monkeypatch.setenv(var, str(tmp_path / val))
     assert check_command("git push", repo) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        ('curl -u "bob:pa\\"ss word" https://x', "ss word"),
+        ("curl -u 'bob:it\\'s' https://x", "bob"),
+        ("wget --user=admin --password=x https://x", "admin"),
+        ("curl -uadmin:hunter2 https://x", "hunter2"),
+    ],
+)
+def test_basic_auth_scanner(command, leak):
+    from snapjudge.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+def test_colon_operands_outside_http_clients_are_kept():
+    from snapjudge.guard.rules import redact
+
+    assert redact("sort -u 'file:with-colon'") == "sort -u 'file:with-colon'"

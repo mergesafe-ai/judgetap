@@ -643,11 +643,6 @@ COMMAND_SECRETS = (
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
     # Basic auth on the command line: curl -u user:pass, --user=user:pass.
     # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
-    # Quoted values are consumed whole (passwords may contain spaces), and
-    # curl's attached form -uuser:pass is covered too.
-    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?')[^':]*:[^']*(?=')"),
-    re.compile(r'(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?")[^":]*:[^"]*(?=")'),
-    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)?)[^\s'\":]*:[^\s'\"]*"),
     # Bearer tokens outside an Authorization header (-H "Bearer x", env, args).
     re.compile(r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
     # Stripe test keys: redacted in logs, but not a reason to hold a write.
@@ -655,8 +650,55 @@ COMMAND_SECRETS = (
 )
 
 
+AUTH_PROGRAMS = re.compile(r"(?<![\w-])(curl|wget|http|https|httpie|xh)(?![\w-])")
+USER_FLAG = re.compile(r"(?<![\w-])(--user|-u)(?==|\s|[^\s-])")
+
+
+def _shell_word_end(text: str, i: int) -> int:
+    """Index just past the shell word starting at i: quotes and backslash
+    escapes are followed, so `"bob:pa\\"ss"` is one word."""
+    quote = None
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c.isspace() or c in ";&|":
+            break
+        i += 1
+    return min(i, len(text))
+
+
+def _redact_basic_auth(text: str) -> str:
+    """Mask the whole argument of -u/--user, but only in HTTP clients:
+    `sort -u file:x` keeps its argument."""
+    if not AUTH_PROGRAMS.search(text):
+        return text
+    out, pos = [], 0
+    for m in USER_FLAG.finditer(text):
+        if m.start() < pos:
+            continue
+        start = m.end()
+        if start < len(text) and text[start] == "=":
+            start += 1
+        while start < len(text) and text[start] == " ":
+            start += 1
+        end = _shell_word_end(text, start)
+        if end > start:
+            out.append(text[pos:start] + "[REDACTED]")
+            pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def redact(text: str) -> str:
     """Mask credential-looking values so a command can be logged."""
+    text = _redact_basic_auth(text)
     for _name, pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     for pattern in COMMAND_SECRETS:
