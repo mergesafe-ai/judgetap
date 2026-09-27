@@ -148,14 +148,14 @@ def agentjev_up(
 SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+-]+")
 
 
-KNOWN_ENGINES = frozenset({"jev", "llm", "laya", "agentjev"})
+KNOWN_ENGINES = frozenset({"jev", "llm", "laya", "agentjev", "typesafe"})
 
 
 def write_engine(home: Path, spec: str) -> Path:
     """Record the engine in guard.toml, keeping any user rules already there."""
     if not SPEC_PATTERN.fullmatch(spec):
         raise ValueError(f"not a valid engine spec: {spec!r}")
-    if spec.partition(":")[0] not in KNOWN_ENGINES:
+    if spec.partition(":")[0].partition("@")[0] not in KNOWN_ENGINES:
         raise ValueError(
             f"unknown engine {spec!r}; known: {', '.join(sorted(KNOWN_ENGINES))}"
         )

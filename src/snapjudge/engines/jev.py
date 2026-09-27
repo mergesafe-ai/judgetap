@@ -78,10 +78,21 @@ class JevEngine:
     ) -> None:
         parsed = urllib.parse.urlparse(base_url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise JevError(f"base_url must be an http(s) URL, got {base_url!r}")
-        self.base_url = base_url.rstrip("/")
+            raise JevError("base_url must be an http(s) URL with a host")
+        if parsed.username or parsed.password:
+            # Credentials in the URL would end up in names, reprs and logs.
+            raise JevError("base_url must not contain credentials; use api_key")
+        try:
+            _ = parsed.port  # raises on a malformed port
+        except ValueError as err:
+            raise JevError(f"base_url has an invalid port: {err}") from err
         # Any TypeSafe-compatible server on this machine: no key, no price.
         self.local = parsed.hostname in LOCAL_HOSTS
+        if parsed.scheme == "http" and not self.local:
+            raise JevError(
+                "remote base_url must use https: the API key would travel in cleartext"
+            )
+        self.base_url = base_url.rstrip("/")
         self.name = (
             "jev" if self.base_url == DEFAULT_BASE_URL else f"typesafe@{parsed.netloc}"
         )

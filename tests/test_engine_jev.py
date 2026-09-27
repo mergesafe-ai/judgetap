@@ -193,3 +193,32 @@ def test_url_specs():
     assert load("jev").name == "jev"
     with pytest.raises(sj.SnapjudgeError):
         load("typesafe")
+
+
+@pytest.mark.parametrize(
+    ("url", "match"),
+    [
+        ("http://gateway.example", "https"),
+        ("https://user:pw@gateway.example", "credentials"),
+        ("http://127.0.0.1:bad", "port"),
+        ("ftp://x", "http"),
+    ],
+)
+def test_unsafe_or_malformed_base_urls_are_rejected(url, match):
+    with pytest.raises(JevError, match=match):
+        JevEngine(api_key="k", base_url=url)
+
+
+def test_local_http_is_allowed():
+    assert JevEngine(base_url="http://localhost:8000").local
+
+
+def test_write_engine_accepts_url_specs(tmp_path):
+    from snapjudge.guard.install import write_engine
+
+    write_engine(tmp_path, "jev@http://127.0.0.1:8000")
+    write_engine(tmp_path, "typesafe:https://gw.example")
+    assert (
+        'engine = "typesafe:https://gw.example"'
+        in (tmp_path / "guard.toml").read_text()
+    )
