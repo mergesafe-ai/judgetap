@@ -73,15 +73,22 @@ A pre-action hook for coding agents, built on the core.
 - Training or hosting a decision model.
 - Text generation, explanations or chat.
 - A hosted service; everything runs locally or against the user's own keys.
+- Open-ended planning or writing code. snapjudge makes bounded choices (labels, scales, yes/no); the agent does the rest.
 
 ## Milestones
 
 1. **v0.1 core**: API, `Decision`, `jev` + `llm` adapters, cascade, tests with recorded fixtures.
 2. **v0.2 guard**: rules layer, judgement layer, Claude Code install, logging. First public launch (README GIF).
-3. **v0.3 breadth**: local `laya`/`agentjev` adapters, Cursor and Codex install, `eval` command.
+3. **v0.3 breadth**: local `laya`/`agentjev` adapters (done, #18), `eval` calibration check (done, #20), Cursor and Codex install (#6).
 4. **v0.4**: TypeScript client; published calibration comparison across engines on real agent actions.
+5. **v0.5 agent hooks beyond safety**, on the guard's hook plumbing, each gated on its own labelled set in `eval`:
+   1. Task-done check on `Stop` (yes/no + p): push back when the agent stops early (#26).
+   2. Output pruning on `PostToolUse` (label: keep / summarize / drop): keep noisy tool output out of context (#27).
+   3. Loop detection: notice when the agent repeats the same failing actions (#28).
+   4. Measurement: tokens saved per session in the decision log, reported by `stats` and the dashboard (#10, #29).
 
 ## Open questions
 
 - Engine for the guard by default when the user has no Jev key: local model (download size) or their LLM key (latency)?
+- Do the v0.5 hooks ship as a separate `snapjudge agent` command, or as modes of `snapjudge guard`?
 - Does `eval` ship with a public case set of agent actions, and where do labelled cases come from?

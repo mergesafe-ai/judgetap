@@ -1,6 +1,6 @@
 # snapjudge
 
-**One API for fast, typed decisions across every Jev-style engine, and a guard for coding agents built on it.**
+**One API for fast, typed decisions across every Jev-style engine. The guard for coding agents is the first thing built on it.**
 
 A new class of models answers questions with a *decision* instead of text: pick one of these labels, place this on a scale, yes or no, each with a probability, in tens to hundreds of milliseconds for a fraction of a cent. TypeSafe's Jev started it; Laya, AgentJev and others followed, and structured-output LLMs can do the same job more slowly.
 
@@ -40,6 +40,10 @@ Local engines: `sj.engines.load("laya")` runs Laya in process (`pip install "sna
 ## snapjudge guard
 
 A pre-action hook for Claude Code (Cursor and Codex next, #6). Every command, file write and edit is checked before it runs: a denylist of common destructive forms (`rm -rf /`, force-push to `main`, `DROP TABLE`; best-effort, not a sandbox, see SPEC §5), and, once you configure an engine (`SNAPJUDGE_ENGINE`), a snapjudge decision for the rest (is this irreversible? off-task? against a rule in `AGENTS.md`?). Without an engine the guard runs its rules only. Most actions pass in about a quarter-second; the rare risky one is held, and the agent is told why.
+
+## Beyond the guard
+
+Coding agents spend whole LLM turns on small choices: is the task done, does this tool output matter, am I going in circles. Each is a bounded decision that snapjudge can make in about 100 ms for a fraction of a cent. The same hooks the guard uses can carry them: a task-done check when the agent stops, pruning of noisy tool output, loop detection. These are planned, not shipped; see the milestones in [docs/SPEC.md](docs/SPEC.md#milestones).
 
 ## Status
 
