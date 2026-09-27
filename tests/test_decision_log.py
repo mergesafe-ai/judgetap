@@ -202,7 +202,8 @@ def test_escalated_cascade_counts_every_hop(tmp_path, monkeypatch):
     engines = load(tmp_path)["summary"]["engines"]
     assert engines["cheap"]["calls"] == 1 and engines["strong"]["calls"] == 1
     assert (
-        engines["cheap"]["p50_ms"] is None and engines["strong"]["p50_ms"] is not None
+        engines["cheap"]["p50_ms"] is None
+        and engines["strong"]["p50_ms"] is None  # a cascade's latency is not split
     )
 
 
@@ -249,3 +250,35 @@ def test_guard_verdict_records_hops(tmp_path):
         sj.Cascade([cheap, strong]),
     )
     assert v.hops == ["cheap", "strong"]
+
+
+def test_exhausted_guard_cascade_still_counts_its_calls(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.dashboard.data import load
+    from snapjudge.guard.core import Action, check
+    from snapjudge.guard.hook import log
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    from snapjudge.testing import StaticEngine
+
+    a = StaticEngine(lambda q, c: {"yes": 0.5, "no": 0.5}, name="a")
+    b = StaticEngine(lambda q, c: {"yes": 0.6, "no": 0.4}, name="b")
+    action = Action(tool="Bash", cwd=tmp_path, command="make deploy")
+    v = check(action, sj.Cascade([a, b]))
+    assert v.error and v.hops == ["a", "b"]
+    log(action, v, "s")
+    engines = load(tmp_path)["summary"]["engines"]
+    assert engines["a"]["calls"] == 1 and engines["b"]["calls"] == 1
+
+
+def test_single_engine_batch_latency_sampled_once(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.dashboard.data import load
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    e = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="e")
+    sj.batch([sj.Question.yesno("a"), sj.Question.yesno("b")], engine=e)
+    engines = load(tmp_path)["summary"]["engines"]
+    assert engines["e"]["calls"] == 1 and engines["e"]["p50_ms"] is not None

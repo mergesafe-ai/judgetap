@@ -106,7 +106,9 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         outcomes[r.get("outcome")] += 1
         if r.get("outcome") == "hold" and r["false_alarm"]:
             false_holds += 1
-        if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
+        if r.get("hops") or (
+            r.get("layer") == "judge" and not r.get("error") and r.get("engine")
+        ):
             _count_hops(r, calls, by_engine, seen_calls)
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
@@ -135,21 +137,25 @@ FALLBACK = "fallback"  # the cascade's on_exhausted callback, not an engine
 
 
 def _count_hops(r, calls, by_engine, seen_calls) -> None:
-    """Count each engine a record's call consulted once (a batch shares one
-    call id), and give the end-to-end latency to the engine that answered."""
+    """Count each engine a record's call consulted, once per call id (a batch
+    shares one). Latency is only sampled when a single engine answered the
+    whole record without a cascade: a cascade's end-to-end time can't be
+    split between the engines it tried, so it isn't attributed to any."""
     engine = r.get("engine")
-    for hop in r.get("hops") or ([engine] if engine else []):
-        if hop == FALLBACK:
-            continue
-        key = (r.get("call") or r["id"], hop)
+    hops = [h for h in (r.get("hops") or ([engine] if engine else [])) if h != FALLBACK]
+    call = r.get("call") or r["id"]
+    for hop in hops:
+        key = (call, hop)
         if key in seen_calls:
             continue
         seen_calls[key] = None
         if len(seen_calls) > 256:
             seen_calls.popitem(last=False)
         calls[hop] += 1
-        if hop == engine:
-            by_engine[hop].append(float(r.get("latency_ms") or 0))
+    single = len(hops) == 1 and hops[0] == engine and not r.get("error")
+    if single and (call, "latency") not in seen_calls:
+        seen_calls[(call, "latency")] = None
+        by_engine[engine].append(float(r.get("latency_ms") or 0))
 
 
 def _rank(values: Iterable[float], q: float) -> float | None:

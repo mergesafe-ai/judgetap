@@ -169,11 +169,16 @@ def _judge(action: Action, engine: Engine) -> Verdict:
     except Exception as err:  # noqa: BLE001 -- the judge must never break the agent
         # Fail closed like rules-only mode: an unreachable judge is no engine.
         error = f"{type(err).__name__}: {err}"
+        tried = list(
+            getattr(err, "hops", ())
+        )  # engines an exhausted cascade still called
         fallback = rules_only_check(action.command) if action.command else None
         if fallback:
             outcome, name, reason = fallback
-            return Verdict(outcome, "rules", reason, rule=name, error=error)
-        return Verdict("allow", "judge", "judgement failed; rules only", error=error)
+            return Verdict(outcome, "rules", reason, rule=name, error=error, hops=tried)
+        return Verdict(
+            "allow", "judge", "judgement failed; rules only", error=error, hops=tried
+        )
     latency = (time.perf_counter() - start) * 1000
     p = {k: d.p_yes for k, d in zip(keys, decisions, strict=True)}
     costs = [d.cost_usd for d in decisions if d.cost_usd is not None]

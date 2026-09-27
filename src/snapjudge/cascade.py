@@ -24,7 +24,14 @@ CONFIG_FILE = "snapjudge.toml"
 
 
 class CascadeExhaustedError(SnapjudgeError):
-    """No engine answered a question with enough confidence."""
+    """No engine answered a question with enough confidence.
+
+    `hops` lists every engine consulted, so callers can still account for
+    the calls that were made."""
+
+    def __init__(self, message: str, hops: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.hops = hops
 
 
 @dataclass
@@ -133,7 +140,8 @@ class Cascade:
             return _as_result(answered[-1], hops, spent)
         errors = "; ".join(f"{a.engine}: {a.error or f'p={a.p:.2f}'}" for a in attempts)
         raise CascadeExhaustedError(
-            f"no engine reached p>={self.escalate_below} for {question.text!r} ({errors})"
+            f"no engine reached p>={self.escalate_below} for {question.text!r} ({errors})",
+            hops=hops,
         )
 
 
