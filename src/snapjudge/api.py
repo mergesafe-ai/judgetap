@@ -41,7 +41,10 @@ def _finish(decisions: list[Decision], log: bool) -> list[Decision]:
 async def _afinish(decisions: list[Decision], log: bool) -> list[Decision]:
     # File writes stay off the event loop.
     if log and decision_log.enabled(_log):
-        await asyncio.to_thread(decision_log.record, decisions)
+        try:
+            await asyncio.to_thread(decision_log.record, decisions)
+        except RuntimeError:
+            pass  # executor gone (shutdown): logging must never fail a decision
     return decisions
 
 

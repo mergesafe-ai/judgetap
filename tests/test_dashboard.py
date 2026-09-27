@@ -359,3 +359,12 @@ def test_cache_is_safe_under_concurrent_loads(tmp_path):
     for t in threads:
         t.join()
     assert errors == []
+
+
+def test_outcome_filter_is_built_from_records(server):
+    base, _ = server
+    page = call(base + "/")[1]
+    assert (
+        b"function outcomeOptions" in page
+        and b'<select id="f-outcome"><option value="">All</option></select>' in page
+    )

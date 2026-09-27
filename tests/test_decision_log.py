@@ -133,3 +133,35 @@ def test_guard_stats_ignore_library_records(tmp_path, monkeypatch, capsys):
     (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     main(["guard", "stats"])
     assert "1 guarded calls" in capsys.readouterr().out
+
+
+def test_batch_counts_as_one_engine_call(tmp_path, monkeypatch):
+    import snapjudge as sj
+    from snapjudge.dashboard.data import load
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+    engine = StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}, name="e")
+    sj.batch([sj.Question.yesno("a"), sj.Question.yesno("b")], engine=engine)
+    summary = load(tmp_path)["summary"]
+    assert summary["engines"]["e"]["calls"] == 1
+
+
+def test_async_scheduling_failure_does_not_fail_the_decision(tmp_path, monkeypatch):
+    import asyncio
+
+    import snapjudge as sj
+    from snapjudge.testing import StaticEngine
+
+    monkeypatch.setenv("SNAPJUDGE_HOME", str(tmp_path))
+    monkeypatch.setenv("SNAPJUDGE_LOG", "1")
+
+    async def boom(*a, **k):
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(asyncio, "to_thread", boom)
+    d = asyncio.run(
+        sj.ayesno("q", engine=StaticEngine(lambda q, c: {"yes": 0.9, "no": 0.1}))
+    )
+    assert d.value == "yes"

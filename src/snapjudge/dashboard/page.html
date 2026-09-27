@@ -43,7 +43,7 @@ button { background:none; border:1px solid var(--line); color:var(--accent); bor
   <section>
     <h2>Recent decisions</h2>
     <div class="filters">
-      <label>Outcome <select id="f-outcome"><option value="">All</option><option>hold</option><option>ask</option><option>allow</option></select></label>
+      <label>Outcome <select id="f-outcome"><option value="">All</option></select></label>
       <label>Source <select id="f-source"><option value="">All</option><option value="guard">Guard</option><option value="library">Library</option></select></label>
       <label>Layer <select id="f-layer"><option value="">All</option><option>rules</option><option>judge</option><option>skip</option><option>none</option></select></label>
       <label>Search <input id="f-text" placeholder="Command or reason"></label>
@@ -80,6 +80,13 @@ function engines(e) {
   const rows = Object.entries(e).map(([n, v]) => `<tr><td>${esc(n)}</td><td>${v.calls}</td><td>${fmt(v.p50_ms)} ms</td><td>${fmt(v.p95_ms)} ms</td></tr>`);
   $("engines").innerHTML = rows.length ? `<tr><th>Engine</th><th>Calls</th><th>p50</th><th>p95</th></tr>${rows.join("")}` : '<tr><td class="muted">No judge calls yet (no engine configured, or nothing reached the judge).</td></tr>';
 }
+function outcomeOptions() {
+  // Guard verdicts plus whatever answers library calls returned.
+  const sel = $("f-outcome"), current = sel.value;
+  const values = [...new Set(["hold", "ask", "allow", ...data.recent.map((r) => r.outcome).filter(Boolean)])];
+  sel.innerHTML = '<option value="">All</option>' + values.map((v) => `<option>${esc(v)}</option>`).join("");
+  sel.value = values.includes(current) ? current : "";
+}
 function recent() {
   const o = $("f-outcome").value, l = $("f-layer").value, src = $("f-source").value, t = $("f-text").value.toLowerCase();
   const rows = data.recent.filter((r) => (!o || r.outcome === o) && (!l || r.layer === l) && (!src || r.source === src) &&
@@ -98,7 +105,7 @@ async function refresh() {
     const res = await fetch("/api/data");
     if (!res.ok) throw new Error("HTTP " + res.status);
     data = await res.json();
-    tiles(data.summary); days(data.summary.per_day); engines(data.summary.engines); recent();
+    tiles(data.summary); outcomeOptions(); days(data.summary.per_day); engines(data.summary.engines); recent();
     lastOk = new Date();
     status.textContent = "Updated " + lastOk.toLocaleTimeString();
     status.classList.remove("error");

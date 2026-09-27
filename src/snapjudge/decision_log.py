@@ -32,10 +32,12 @@ def record(decisions: Sequence[Decision]) -> None:
         path = home() / "guard.jsonl"
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         ts = datetime.now(UTC).isoformat(timespec="milliseconds")
+        call = uuid.uuid4().hex  # one engine call answered the whole batch
         lines = [
             json.dumps(
                 {
                     "id": uuid.uuid4().hex,
+                    "call": call,
                     "ts": ts,
                     "source": "library",
                     "tool": "library",

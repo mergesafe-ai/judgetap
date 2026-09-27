@@ -82,7 +82,8 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     per_day: dict[str, Counter] = {d: Counter() for d in window}
     outcomes: Counter = Counter()
     by_engine: dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_LATENCIES))
-    calls: Counter = Counter()  # true totals; the latency deques are capped
+    calls: Counter = Counter()
+    seen_calls: set[str] = set()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds, library = 0.0, 0, 0, 0
     for n, r in _iter_jsonl(home / "guard.jsonl"):
@@ -95,7 +96,10 @@ def _load(home: Path, today: date) -> dict[str, Any]:
             # Library outcomes are answers ("billing", "yes"), not guard
             # verdicts: counted apart, kept out of hold/ask/allow and the chart.
             library += 1
-            if r.get("engine"):
+            # A batch is one engine call: count it (and its latency) once.
+            call = r.get("call") or r["id"]
+            if r.get("engine") and call not in seen_calls:
+                seen_calls.add(call)
                 by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
                 calls[r["engine"]] += 1
             continue
