@@ -23,7 +23,7 @@ from judgetap.errors import (
 )
 from judgetap.types import Decision, Question
 
-__version__ = "0.1.0"  # x-release-please-version
+__version__ = "0.2.0"  # x-release-please-version
 
 __all__ = [
     "Cascade",
