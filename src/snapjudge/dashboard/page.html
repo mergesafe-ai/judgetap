@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>snapjudge dashboard</title>
+<style>
+:root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e4e3de; --card:#ffffff;
+  --hold:#b3261e; --ask:#9a6700; --allow:#2e6b3a; --accent:#3a5bd9; }
+@media (prefers-color-scheme: dark) { :root { --bg:#141413; --fg:#ecebe6; --muted:#9b9a94;
+  --line:#2c2b28; --card:#1c1c1a; --hold:#f2847b; --ask:#e3b341; --allow:#7cc68a; --accent:#8ea6ff; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:24px 16px 48px; }
+h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--muted); margin:0 0 20px; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+.tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+.tile b { display:block; font-size:22px; font-variant-numeric:tabular-nums; } .tile span { color:var(--muted); font-size:12px; }
+section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+h2 { font-size:14px; margin:0 0 10px; }
+.days { display:flex; align-items:flex-end; gap:3px; height:80px; }
+.day { flex:1; display:flex; flex-direction:column-reverse; min-width:6px; }
+.day i { display:block; } .day .allow{background:var(--allow)} .day .ask{background:var(--ask)} .day .hold{background:var(--hold)}
+.filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+select, input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
+.wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-weight:500; } td.subject { font-family:ui-monospace, monospace; word-break:break-all; }
+.badge { font-weight:600; } .hold{color:var(--hold)} .ask{color:var(--ask)} .allow{color:var(--allow)}
+button { background:none; border:1px solid var(--line); color:var(--accent); border-radius:6px; padding:2px 8px; cursor:pointer; font:inherit; font-size:12px; }
+.muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>snapjudge dashboard</h1>
+  <p class="sub">Local only: reads your guard log, sends nothing anywhere. <span id="updated" class="muted"></span></p>
+  <div class="tiles" id="tiles"></div>
+  <section><h2>Last 30 days</h2><div class="days" id="days"></div></section>
+  <section><h2>Engines (judge calls)</h2><div class="wrap"><table id="engines"></table></div></section>
+  <section>
+    <h2>Recent decisions</h2>
+    <div class="filters">
+      <select id="f-outcome"><option value="">All outcomes</option><option>hold</option><option>ask</option><option>allow</option></select>
+      <select id="f-layer"><option value="">All layers</option><option>rules</option><option>judge</option><option>skip</option><option>none</option></select>
+      <input id="f-text" placeholder="Filter command or reason">
+    </div>
+    <div class="wrap"><table id="recent"></table></div>
+  </section>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+let data = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (n, d = 0) => n == null ? "–" : Number(n).toFixed(d);
+
+function tiles(s) {
+  const o = s.outcomes || {};
+  const items = [["Guarded calls", s.total], ["Holds", o.hold || 0], ["Asks", o.ask || 0],
+    ["Holds / 1,000", fmt(s.holds_per_1000, 1)], ["False alarms", s.false_alarms], ["Engine cost", "$" + fmt(s.cost_usd, 4)]];
+  $("tiles").innerHTML = items.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
+}
+function days(perDay) {
+  const entries = Object.entries(perDay);
+  const max = Math.max(1, ...entries.map(([, c]) => (c.allow||0) + (c.ask||0) + (c.hold||0)));
+  $("days").innerHTML = entries.map(([d, c]) => {
+    const seg = (k) => `<i class="${k}" style="height:${(80 * (c[k]||0) / max).toFixed(1)}px"></i>`;
+    return `<div class="day" title="${esc(d)}: ${c.hold||0} hold, ${c.ask||0} ask, ${c.allow||0} allow">${seg("allow")}${seg("ask")}${seg("hold")}</div>`;
+  }).join("") || '<span class="muted">No data yet.</span>';
+}
+function engines(e) {
+  const rows = Object.entries(e).map(([n, v]) => `<tr><td>${esc(n)}</td><td>${v.calls}</td><td>${fmt(v.p50_ms)} ms</td><td>${fmt(v.p95_ms)} ms</td></tr>`);
+  $("engines").innerHTML = rows.length ? `<tr><th>Engine</th><th>Calls</th><th>p50</th><th>p95</th></tr>${rows.join("")}` : '<tr><td class="muted">No judge calls yet (no engine configured, or nothing reached the judge).</td></tr>';
+}
+function recent() {
+  const o = $("f-outcome").value, l = $("f-layer").value, t = $("f-text").value.toLowerCase();
+  const rows = data.recent.filter((r) => (!o || r.outcome === o) && (!l || r.layer === l) &&
+    (!t || (r.subject || "").toLowerCase().includes(t) || (r.reason || "").toLowerCase().includes(t)));
+  $("recent").innerHTML = `<tr><th>When</th><th>Outcome</th><th>Tool</th><th>Command / file</th><th>Why</th><th>Layer</th><th></th></tr>` +
+    rows.map((r) => `<tr><td>${esc((r.ts || "").replace("T", " ").slice(0, 19))}</td>
+      <td class="badge ${esc(r.outcome)}">${esc(r.outcome)}</td><td>${esc(r.tool)}</td>
+      <td class="subject">${esc(r.subject)}</td><td>${esc(r.reason)}${r.error ? ` <span class="muted">(${esc(r.error)})</span>` : ""}</td>
+      <td>${esc(r.layer)}${r.engine ? ` · ${esc(r.engine)}` : ""}</td>
+      <td>${r.outcome === "hold" ? (r.false_alarm ? '<span class="muted">false alarm</span>' : `<button data-id="${esc(r.id)}">False alarm</button>`) : ""}</td></tr>`).join("");
+}
+async function refresh() {
+  const res = await fetch("/api/data");
+  data = await res.json();
+  tiles(data.summary); days(data.summary.per_day); engines(data.summary.engines); recent();
+  $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+}
+$("recent").addEventListener("click", async (e) => {
+  const id = e.target.dataset && e.target.dataset.id;
+  if (!id) return;
+  await fetch("/api/false-alarm", { method: "POST", headers: { "Content-Type": "application/json", "X-Snapjudge-Token": TOKEN }, body: JSON.stringify({ id }) });
+  refresh();
+});
+["f-outcome", "f-layer", "f-text"].forEach((id) => $(id).addEventListener("input", recent));
+refresh(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>
