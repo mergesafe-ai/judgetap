@@ -144,3 +144,34 @@ def test_overflowing_cost_total_still_serves(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_malformed_calls_field_keeps_legacy_fallback(tmp_path):
+    import json
+
+    from judgetap.dashboard.data import load
+
+    (tmp_path / "guard.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "a",
+                "outcome": "allow",
+                "layer": "judge",
+                "engine": "e",
+                "latency_ms": 12,
+                "calls": "x",
+            }
+        )
+        + "\n"
+    )
+    e = load(tmp_path)["summary"]["engines"]["e"]
+    assert e["calls"] == 1 and e["p50_ms"] == 12
+
+
+def test_deeply_nested_extra_field_does_not_drop_the_record(tmp_path):
+    from judgetap.dashboard.data import load
+
+    deep = "[" * 5000 + "]" * 5000
+    line = '{"id": "a", "outcome": "hold", "layer": "rules", "extra": ' + deep + "}"
+    (tmp_path / "guard.jsonl").write_text(line + "\n")
+    assert load(tmp_path)["summary"]["total"] == 1

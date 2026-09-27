@@ -167,14 +167,21 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _scrub(value: Any) -> Any:
-    """NaN/Infinity anywhere (even in fields the page doesn't use) become None."""
+MAX_DEPTH = 8  # deeper than any field the page reads
+
+
+def _scrub(value: Any, depth: int = 0) -> Any:
+    """NaN/Infinity anywhere (even in fields the page doesn't use) become None.
+    Nesting past MAX_DEPTH is cut to None, so a pathological unrelated field
+    can't exhaust the stack and cost the record."""
     if isinstance(value, float) and not math.isfinite(value):
         return None
+    if isinstance(value, dict | list) and depth >= MAX_DEPTH:
+        return None
     if isinstance(value, dict):
-        return {k: _scrub(v) for k, v in value.items()}
+        return {k: _scrub(v, depth + 1) for k, v in value.items()}
     if isinstance(value, list):
-        return [_scrub(v) for v in value]
+        return [_scrub(v, depth + 1) for v in value]
     return value
 
 
@@ -197,10 +204,14 @@ def _clean(r: dict[str, Any]) -> dict[str, Any]:
             for k, v in out["p"].items()
             if isinstance(k, str) and _finite(v) is not None
         }
+    if "calls" in out and not isinstance(out["calls"], list):
+        # Not a calls list at all: treat the record as having none, so the
+        # legacy fallback still counts its engine.
+        del out["calls"]
     if "calls" in out:
         # Calls are echoed back in "recent" too: keep only well-formed ones
         # with a finite (or absent) latency.
-        calls = out["calls"] if isinstance(out["calls"], list) else []
+        calls = out["calls"]
         out["calls"] = [
             {**c, "latency_ms": _finite(c.get("latency_ms"))}
             for c in calls
