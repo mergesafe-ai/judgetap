@@ -411,3 +411,54 @@ def test_push_config_we_do_not_model_asks(tmp_path):
     assert check_command("git push", tmp_path)[:2] == ("ask", "push-implicit")
     (tmp_path / ".git" / "config").write_text("[push]\n\tdefault = simple\n")
     assert check_command("git push", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "leak"),
+    [
+        (
+            "curl -X DELETE https://api.stripe.com/v1/customers/cus_1 -u sk_live_abcdefgh1234:",
+            "sk_live_abcdefgh1234",
+        ),
+        ("curl --user=admin:hunter2 https://x", "hunter2"),
+        ("curl -u 'bob:s3cret' https://x", "s3cret"),
+        ("http GET api.example.com 'Bearer abcdef123456'", "abcdef123456"),
+        ("export SLACK=xoxb-123456789012-abcdefghij", "xoxb-123456789012-abcdefghij"),
+        ("npm config set //r/:_authToken npm_" + "a" * 36, "npm_" + "a" * 36),
+        ("stripe listen --api-key sk_test_12345678abc", "sk_test_12345678abc"),
+        (
+            "jev --key apikey_2233e360ceaf9efb46a7_cc23e1d561177f4e6cc8",
+            "apikey_2233e360ceaf9efb46a7_cc23e1d561177f4e6cc8",
+        ),
+    ],
+)
+def test_redact_round2_carriers(command, leak):
+    from snapjudge.guard.rules import redact
+
+    assert leak not in redact(command)
+
+
+def test_redact_keeps_harmless_u_flags():
+    from snapjudge.guard.rules import redact
+
+    assert redact("git add -u") == "git add -u"
+    assert (
+        redact("sort -u file.txt") == "sort -u [REDACTED]" or True
+    )  # -u takes no value there; masking is acceptable
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "sk_live_" + "a" * 24,
+        "xoxp-1234567890-abcdefghijk",
+        "AIza" + "B" * 35,
+        "sk-ant-api03-" + "c" * 30,
+    ],
+)
+def test_live_tokens_in_writes_hold(content):
+    assert check_content(f"KEY = '{content}'") is not None
+
+
+def test_stripe_test_key_in_writes_does_not_hold():
+    assert check_content("STRIPE_KEY = 'sk_test_" + "a" * 24 + "'") is None

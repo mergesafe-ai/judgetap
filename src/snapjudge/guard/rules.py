@@ -88,6 +88,12 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("github-fine-grained-token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     ("openai-key", re.compile(r"\bsk-(proj-)?[A-Za-z0-9_-]{32,}\b")),
     ("pypi-token", re.compile(r"\bpypi-[A-Za-z0-9_-]{50,}\b")),
+    ("stripe-live-key", re.compile(r"\b[sr]k_live_[A-Za-z0-9]{8,}\b")),
+    ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
+    ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
+    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
+    ("typesafe-key", re.compile(r"\bapikey_[0-9a-f]{20,}_[0-9a-f]{20,}\b")),
 )
 
 
@@ -593,6 +599,13 @@ COMMAND_SECRETS = (
     ),
     re.compile(r"(?P<keep>\b[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|API_KEY)=)\S+"),
     re.compile(r"(?P<keep>://[^:/\s@]+:)[^@\s]+(?=@)"),
+    # Basic auth on the command line: curl -u user:pass, --user=user:pass.
+    # Only user:pass values, so `sort -u file` and `git add -u` stay readable.
+    re.compile(r"(?P<keep>(?<![\w-])(-u|--user)(=|\s+)['\"]?)[^\s'\":]*:[^\s'\"]*"),
+    # Bearer tokens outside an Authorization header (-H "Bearer x", env, args).
+    re.compile(r"(?i)(?P<keep>\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    # Stripe test keys: redacted in logs, but not a reason to hold a write.
+    re.compile(r"(?P<keep>\b)[sr]k_test_[A-Za-z0-9]{8,}\b"),
 )
 
 
