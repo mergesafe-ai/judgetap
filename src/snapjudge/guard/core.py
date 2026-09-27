@@ -72,6 +72,7 @@ class Verdict:
     rule: str | None = None
     p: dict[str, float] = field(default_factory=dict)
     engine: str | None = None
+    hops: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     cost_usd: float | None = None
     error: str | None = None
@@ -179,6 +180,12 @@ def _judge(action: Action, engine: Engine) -> Verdict:
     common = {
         "p": p,
         "engine": decisions[0].engine,
+        # Every engine a cascade consulted, across the judge's questions.
+        "hops": list(
+            dict.fromkeys(
+                h for d in decisions for h in (d.meta.get("hops") or [d.engine])
+            )
+        ),
         "latency_ms": latency,
         "cost_usd": sum(costs) if costs else None,
     }

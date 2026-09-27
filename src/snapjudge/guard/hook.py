@@ -162,6 +162,7 @@ def log(action: Action, verdict: Verdict, session: str | None) -> None:
         "reason": verdict.reason,
         "p": verdict.p,
         "engine": verdict.engine,
+        "hops": verdict.hops,
         "latency_ms": round(verdict.latency_ms, 1),
         "cost_usd": verdict.cost_usd,
         "error": verdict.error,

@@ -100,27 +100,14 @@ def _load(home: Path, today: date) -> dict[str, Any]:
             # Library outcomes are answers ("billing", "yes"), not guard
             # verdicts: counted apart, kept out of hold/ask/allow and the chart.
             library += 1
-            # A batch is one engine call: count it (and its latency) once.
-            # Every engine a cascade consulted made a call; the end-to-end
-            # latency is attributed to the engine that answered.
-            for hop in r.get("hops") or ([r["engine"]] if r.get("engine") else []):
-                key = (r.get("call") or r["id"], hop)
-                if key in seen_calls:
-                    continue
-                seen_calls[key] = None
-                if len(seen_calls) > 256:
-                    seen_calls.popitem(last=False)
-                calls[hop] += 1
-                if hop == r.get("engine"):
-                    by_engine[hop].append(float(r.get("latency_ms") or 0))
+            _count_hops(r, calls, by_engine, seen_calls)
             continue
         total += 1
         outcomes[r.get("outcome")] += 1
         if r.get("outcome") == "hold" and r["false_alarm"]:
             false_holds += 1
         if r.get("layer") == "judge" and not r.get("error") and r.get("engine"):
-            by_engine[r["engine"]].append(float(r.get("latency_ms") or 0))
-            calls[r["engine"]] += 1
+            _count_hops(r, calls, by_engine, seen_calls)
         day = str(r.get("ts", ""))[:10]
         if day in per_day:
             per_day[day][r.get("outcome")] += 1
@@ -142,6 +129,27 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "per_day": {d: dict(c) for d, c in per_day.items()},
     }
     return {"summary": summary, "recent": list(recent)[::-1]}
+
+
+FALLBACK = "fallback"  # the cascade's on_exhausted callback, not an engine
+
+
+def _count_hops(r, calls, by_engine, seen_calls) -> None:
+    """Count each engine a record's call consulted once (a batch shares one
+    call id), and give the end-to-end latency to the engine that answered."""
+    engine = r.get("engine")
+    for hop in r.get("hops") or ([engine] if engine else []):
+        if hop == FALLBACK:
+            continue
+        key = (r.get("call") or r["id"], hop)
+        if key in seen_calls:
+            continue
+        seen_calls[key] = None
+        if len(seen_calls) > 256:
+            seen_calls.popitem(last=False)
+        calls[hop] += 1
+        if hop == engine:
+            by_engine[hop].append(float(r.get("latency_ms") or 0))
 
 
 def _rank(values: Iterable[float], q: float) -> float | None:

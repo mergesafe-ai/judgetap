@@ -204,3 +204,48 @@ def test_escalated_cascade_counts_every_hop(tmp_path, monkeypatch):
     assert (
         engines["cheap"]["p50_ms"] is None and engines["strong"]["p50_ms"] is not None
     )
+
+
+def test_guard_cascade_counts_every_engine_and_skips_fallback(tmp_path, monkeypatch):
+    import json
+
+    from snapjudge.dashboard.data import load
+
+    rows = [
+        {
+            "id": "a",
+            "outcome": "allow",
+            "layer": "judge",
+            "engine": "strong",
+            "hops": ["cheap", "strong"],
+            "latency_ms": 300,
+        },
+        {
+            "id": "b",
+            "source": "library",
+            "outcome": "no",
+            "layer": "library",
+            "engine": "fallback",
+            "hops": ["cheap", "fallback"],
+            "latency_ms": 50,
+            "call": "c1",
+        },
+    ]
+    (tmp_path / "guard.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    engines = load(tmp_path)["summary"]["engines"]
+    assert engines["cheap"]["calls"] == 2 and engines["strong"]["calls"] == 1
+    assert "fallback" not in engines
+
+
+def test_guard_verdict_records_hops(tmp_path):
+    import snapjudge as sj
+    from snapjudge.guard.core import Action, check
+    from snapjudge.testing import StaticEngine
+
+    cheap = StaticEngine(lambda q, c: {"yes": 0.5, "no": 0.5}, name="cheap")
+    strong = StaticEngine(lambda q, c: {"yes": 0.1, "no": 0.9}, name="strong")
+    v = check(
+        Action(tool="Bash", cwd=tmp_path, command="make deploy"),
+        sj.Cascade([cheap, strong]),
+    )
+    assert v.hops == ["cheap", "strong"]
