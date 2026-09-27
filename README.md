@@ -44,7 +44,9 @@ verdict = sj.yesno(
 verdict.value, verdict.p, verdict.engine  # ("yes", 0.97, "jev")
 
 # Ask the cheap engine first, escalate low-confidence answers
-sj.configure(sj.Cascade([sj.engines.load("jev"), sj.engines.load("llm:gemini/gemini-2.0-flash-lite")]))
+jev = sj.engines.load("jev")
+flash = sj.engines.load("llm:gemini/gemini-2.0-flash-lite")
+sj.configure(sj.Cascade([jev, flash]))
 ```
 
 ## Engines
