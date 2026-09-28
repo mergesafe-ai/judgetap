@@ -205,12 +205,18 @@ def test_model_loads_once_per_process_even_concurrently(monkeypatch):
     fake.AutoExtractor = Auto
     monkeypatch.setitem(sys.modules, "gliner2", fake)
     engines = [gmod.GlinerEngine() for _ in range(5)]
-    threads = [threading.Thread(target=e._get) for e in engines]
+    got = []
+    threads = [
+        threading.Thread(target=lambda e=e: got.append(e._get())) for e in engines
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    assert len(loads) == 1 and len({id(e._extractor) for e in engines}) == 1
+    assert len(loads) == 1
+    assert len(got) == len(engines)
+    (cached,) = list(gmod._models.values())
+    assert {id(m) for m in got} == {id(cached)}
 
 
 def test_instance_hits_refresh_lru_and_do_not_pin_evicted(monkeypatch):
