@@ -10,7 +10,7 @@ from pathlib import Path
 from judgetap.errors import JudgetapError
 
 HOOK_COMMAND = "judgetap guard hook"
-POST_COMMAND = "judgetap guard post"  # loop detection, Claude Code only
+POST_COMMAND = "judgetap guard post"  # loop detection
 STOP_COMMAND = "judgetap guard stop"  # opt-in task-done check, Claude Code only
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
@@ -53,11 +53,20 @@ OLD_HOOK_COMMAND = "snapjudge guard hook"  # written by installs before #38
 def _ours(command: str | None) -> bool:
     """Exactly a command this installer writes (now or under the old name);
     anything edited is the user's."""
-    return command in (POST_COMMAND, STOP_COMMAND) or command in {
-        base + suffix
-        for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
-        for suffix in ("", " --agent cursor", " --agent codex")
-    }
+    return (
+        command in (POST_COMMAND, STOP_COMMAND)
+        or command
+        in {
+            POST_COMMAND + " --agent cursor",
+            POST_COMMAND + " --agent codex",
+        }
+        or command
+        in {
+            base + suffix
+            for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
+            for suffix in ("", " --agent cursor", " --agent codex")
+        }
+    )
 
 
 def _upgrade_old(data: dict) -> bool:
@@ -97,22 +106,26 @@ def _events(agent: str, with_stop: bool = False) -> list[str]:
             "PostToolUseFailure",
             *(["Stop"] if with_stop else []),
         ]
-    return [_event(agent)]
+    if agent == "cursor":  # loop detection: success and failure events
+        return [_event(agent), "postToolUse", "postToolUseFailure"]
+    return [_event(agent), "PostToolUse"]  # Codex: PostToolUse sees failures too
 
 
 def _entry(agent: str, event: str) -> dict:
     if agent == "cursor":
+        if event.startswith("post"):
+            return {"command": f"{POST_COMMAND} --agent cursor"}
         return {"command": hook_command(agent)}
     if event == "Stop":  # Stop takes no matcher
         return {"hooks": [{"type": "command", "command": STOP_COMMAND}]}
-    command = (
-        POST_COMMAND
-        if event in ("PostToolUse", "PostToolUseFailure")
-        else hook_command(agent)
-    )
+    command = hook_command(agent)
+    if event in ("PostToolUse", "PostToolUseFailure"):
+        command = POST_COMMAND + (" --agent codex" if agent == "codex" else "")
     # Codex's PreToolUse fires for shell only today; the matcher says so. It
     # tolerates padding because normalise() strips the name before matching.
     matcher = r"^\s*(exec_command|shell|Bash)\s*$" if agent == "codex" else MATCHER
+    if agent == "codex" and event == "PostToolUse":
+        matcher = r"^\s*(exec_command|shell|Bash|apply_patch|Edit|Write)\s*$"
     return {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
 
 

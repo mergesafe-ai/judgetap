@@ -65,7 +65,11 @@ On a CPU-only Linux box, install the CPU PyTorch wheel before `judgetap[laya]` (
 
 ## Guard details
 
-**Loop detection (Claude Code).** `PostToolUse` and `PostToolUseFailure` hooks (`judgetap guard post`, added by `guard install --for claude-code`) notices when the same command or edit fails the same way three times within eight actions and adds a note asking the agent to re-plan. It never blocks, uses no model, and stores only a redacted action and an error hash per session. Cursor and Codex: not yet.
+**Loop detection.** `PostToolUse` and `PostToolUseFailure` hooks (`judgetap guard post`, added by `guard install --for claude-code`) notices when the same command or edit fails the same way three times within eight actions and adds a note asking the agent to re-plan. It never blocks, uses no model, and stores only a redacted action and an error hash per session. Per agent (`guard install --for <agent>` adds it, `uninstall` removes it):
+
+- **Claude Code**: `PostToolUse` + `PostToolUseFailure`; Bash commands and Write/Edit/MultiEdit; the note arrives as `additionalContext`.
+- **Cursor**: `postToolUse` + `postToolUseFailure` (`judgetap guard post --agent cursor`); Shell commands and file edits. Failures come from `postToolUseFailure`'s `error_message` or a non-zero `exitCode` in `postToolUse`'s `tool_output`; the note is returned as `additional_context`. Denials and interrupts are not counted. Cursor's older `afterShellExecution` has no exit status and cannot answer the agent, so it is not used.
+- **Codex**: `PostToolUse` (`judgetap guard post --agent codex`), which also fires after non-zero exits; Bash and `apply_patch`. Codex has no exit-code field, so failure is read from the `Exit code: N` line of the model-facing `tool_response`; the note is returned as `hookSpecificOutput.additionalContext`. Codex has no failure event, so a tool that errors without that line is not counted.
 
 **Output pruning, shadow mode (Claude Code).** The same `PostToolUse` hook labels large tool outputs (over 2000 characters, `prune_threshold` in `~/.judgetap/guard.toml`) keep, summarize or drop by rules and logs the tokens that would have been saved, estimated as characters / 4. It is observe-only: outputs are never changed. `judgetap guard stats` and the dashboard show the total as "est. tokens pruneable (shadow)". Real pruning is gated on a labelled set (#89).
 

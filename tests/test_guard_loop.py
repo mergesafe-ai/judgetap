@@ -145,12 +145,6 @@ def test_install_adds_post_hook_and_uninstall_removes_both(tmp_path):
     assert "hooks" not in json.loads(path.read_text())
 
 
-def test_other_agents_get_no_post_hook(tmp_path):
-    path = tmp_path / "hooks.json"
-    install(path, "codex")
-    assert "PostToolUse" not in json.loads(path.read_text())["hooks"]
-
-
 def test_exit_code_prefixed_string_is_a_failure():
     from judgetap.guard.loop import failure
 

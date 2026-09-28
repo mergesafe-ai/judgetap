@@ -21,7 +21,7 @@ def _guard_stop(args) -> int:
 def _guard_post(args) -> int:
     from judgetap.guard.loop import run
 
-    return run()
+    return run(agent=args.agent)
 
 
 def _guard_hook(args) -> int:
@@ -311,9 +311,13 @@ def main(argv: list[str] | None = None) -> int:
         "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
     )
     hook.set_defaults(func=_guard_hook)
-    gsub.add_parser(
-        "post", help="run as Claude Code's PostToolUse hook (loop detection)"
-    ).set_defaults(func=_guard_post)
+    post = gsub.add_parser(
+        "post", help="run as an agent's post-execution hook (loop detection)"
+    )
+    post.add_argument(
+        "--agent", choices=["claude-code", "cursor", "codex"], default="claude-code"
+    )
+    post.set_defaults(func=_guard_post)
     gsub.add_parser(
         "stop", help="run as Claude Code's Stop hook (experimental task-done check)"
     ).set_defaults(func=_guard_stop)
