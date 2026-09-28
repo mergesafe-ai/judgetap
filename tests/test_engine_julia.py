@@ -197,3 +197,26 @@ def test_model_cache_keeps_two_most_recently_used(fake_julia, tmp_path, monkeypa
     jmod.JuliaEngine("B")._get_runtime()  # reloads B, evicts A
     assert len(fake_julia.loads) == 4
     assert [k[0] for k in jmod._models] == [str(models / "C"), str(models / "B")]
+
+
+def test_instance_hits_refresh_lru_and_do_not_pin_evicted(fake_julia, monkeypatch):
+    from judgetap.engines import julia as jmod
+
+    monkeypatch.setattr(jmod, "_models", {})
+    a, b, c = (JuliaEngine(f"/m/{n}") for n in "abc")
+    a._get_runtime()
+    b._get_runtime()
+    a._get_runtime()  # a hit on the same instance marks a most recently used
+    c._get_runtime()  # evicts b, not a
+    assert list(jmod._models) == [("/m/a", "cpu"), ("/m/c", "cpu")]
+    assert b._runtime is None  # the evicted model is not kept alive by b
+    b._get_runtime()  # so b reloads through the cache
+    assert [p for p, _ in fake_julia.loads] == ["/m/a", "/m/b", "/m/c", "/m/b"]
+
+
+def test_injected_runtime_bypasses_cache(monkeypatch):
+    from judgetap.engines import julia as jmod
+
+    monkeypatch.setattr(jmod, "_models", {})
+    rt = FakeRuntime()
+    assert JuliaEngine(runtime=rt)._get_runtime() is rt and jmod._models == {}
