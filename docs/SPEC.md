@@ -37,7 +37,8 @@ sj.batch([...questions], context=...)                -> list[Decision]  # one pa
 | `jev` | hosted (TypeSafe console, Vercel AI Gateway) | native batch; the reference shape |
 | `laya` | local, open weights (Apache-2.0) | via transformers; GPU optional |
 | `agentjev` | local, open weights | ~50 ms per pass |
-| `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (reading logprobs is a later enhancement) |
+| `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (see `?logprobs` below) |
+| `llm:<model>?logprobs` | same, OpenAI-compatible servers exposing `logprobs` | options listed as letters, one single-token call per question; the distribution is the letters' `top_logprobs` renormalised (missing letters get 0, none present is an error); `calibrated=True`; falls back to JSON mode for good if the provider rejects logprobs |
 
 Config: `judgetap.toml` or env vars; `sj.configure(engines=[...])` in code. Keys never logged.
 

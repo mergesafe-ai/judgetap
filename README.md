@@ -83,6 +83,31 @@ Every PR here is reviewed by [MergeSafe](https://mergesafe.ai) before merge. A f
 
 Early development. Design in [docs/SPEC.md](docs/SPEC.md); roadmap in the issues.
 
+## Open judge models
+
+Open models now match Jev on most decision tasks. LangWatch's comparison reports, over the tasks each model could run: Jev 81.9%, Eikos-27B 80.0%, Shisa DE-1 79.7%, AutoJev-27B 78.9% ([langwatch.ai/compare/jev-vs-all](https://langwatch.ai/compare/jev-vs-all); their numbers, not ours). Run one behind any OpenAI-compatible server and use it through the `llm` engine in **logprobs** mode, which reads each option's probability from the model's token logprobs instead of asking for JSON:
+
+```bash
+# vLLM (GPU; a 27B model needs roughly an H100):
+vllm serve <hf-repo-of-the-model> --served-model-name judge
+# or Ollama:
+ollama serve   # after `ollama pull <model>`
+```
+
+```python
+import os
+
+import judgetap as jt
+
+os.environ["OPENAI_API_BASE"] = (
+    "http://127.0.0.1:8000/v1"  # vLLM; Ollama: http://127.0.0.1:11434/v1
+)
+os.environ["OPENAI_API_KEY"] = "local"  # any value for a local server
+jt.configure(jt.engines.load("llm:openai/judge?logprobs"))
+```
+
+Logprobs mode makes one short call per question (one generated token), not one call per batch, and marks answers `calibrated=True`. If the server doesn't support logprobs, the engine falls back to JSON mode on its own.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
