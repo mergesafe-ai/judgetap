@@ -5,21 +5,26 @@ Two modes:
   are its own estimate, so answers are marked `calibrated=False`.
 - logprobs (`llm:<model>?logprobs`): each question is one call that lists the
   options as letters and reads the letter's token probabilities from the
-  server's `top_logprobs`. The distribution comes from the model itself, so
-  answers are `calibrated=True`. This costs one call per question instead of
-  one per batch, but each call generates a single token. If the provider
-  rejects logprobs, the engine falls back to JSON mode for good.
+  server's `top_logprobs`. These are the model's token probabilities, not a
+  validated confidence, so answers are still `calibrated=False`; use
+  `judgetap eval` to check how well they track accuracy. One call per
+  question (run concurrently, at most MAX_CONCURRENT at once), each generating
+  a single token; every call is reported so metrics count them. If the
+  provider rejects logprobs, the engine falls back to JSON mode for good.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import string
+import time
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from judgetap.engine import Context, RawAnswer, plain_context
+from judgetap.engine import Call, Context, RawAnswer, plain_context
 from judgetap.errors import JudgetapError
 from judgetap.types import Question
 
@@ -48,6 +53,7 @@ def _prompt(questions: Sequence[Question], context: Context) -> str:
 
 
 LETTERS = string.ascii_uppercase
+MAX_CONCURRENT = 8  # per-question logprobs calls in flight at once
 LOGPROBS_SYSTEM = (
     "You answer one question about the given state by choosing one option. "
     "Reply with the option's letter only, nothing else."
@@ -75,7 +81,7 @@ def _letter_distribution(
     """Option -> probability from the first token's top_logprobs, matching
     letters case-insensitively and ignoring surrounding whitespace."""
     try:
-        first = _field(_field(response.choices[0], "logprobs"), "content")[0]
+        first = _field(_field(_field(response, "choices")[0], "logprobs"), "content")[0]
         tops = _field(first, "top_logprobs") or []
     except (TypeError, IndexError, AttributeError) as err:
         raise LLMError(f"{model} returned no logprobs: {err!r}") from err
@@ -93,13 +99,22 @@ def _letter_distribution(
 
 
 def _rejects_logprobs(litellm: Any, err: Exception) -> bool:
-    """True when the provider refused the logprobs parameters themselves."""
+    """True when the provider refused the logprobs parameters themselves.
+    Only provider errors count: judgetap's own errors (an option-count limit,
+    an unparseable reply) never switch the engine to JSON mode."""
+    if isinstance(err, JudgetapError):
+        return False
     kinds = tuple(
         k
-        for k in (getattr(litellm, "UnsupportedParamsError", None),)
+        for k in (
+            getattr(litellm, "UnsupportedParamsError", None),
+            getattr(litellm, "BadRequestError", None),
+        )
         if isinstance(k, type)
     )
-    return (kinds and isinstance(err, kinds)) or "logprob" in str(err).lower()
+    if kinds and isinstance(err, getattr(litellm, "UnsupportedParamsError", ())):
+        return True
+    return bool(kinds) and isinstance(err, kinds) and "logprob" in str(err).lower()
 
 
 class LLMEngine:
@@ -134,9 +149,16 @@ class LLMEngine:
         except (KeyError, TypeError, ValueError, IndexError, AttributeError) as err:
             raise LLMError(f"could not parse {self.model} reply: {err!r}") from err
 
+    def _check_options(self, questions: Sequence[Question]) -> None:
+        """Before any provider call: a local limit, never a provider refusal."""
+        for q in questions:
+            if len(q.options) > len(LETTERS):
+                raise LLMError(
+                    f"logprobs mode handles up to {len(LETTERS)} options; "
+                    f"{q.text!r} has {len(q.options)}"
+                )
+
     def _letter_call(self, question: Question, context: Context) -> dict[str, Any]:
-        if len(question.options) > len(LETTERS):
-            raise LLMError(f"logprobs mode handles up to {len(LETTERS)} options")
         return {
             "model": self.model,
             "messages": [
@@ -159,21 +181,44 @@ class LLMEngine:
         return RawAnswer(
             _letter_distribution(question, response, self.model),
             cost_usd=cost,
-            calibrated=True,
+            calibrated=False,  # token probabilities, not validated confidence
         )
+
+    def _with_calls(
+        self, answers: list[RawAnswer], timings: list[float]
+    ) -> list[RawAnswer]:
+        """Every answer carries the batch's calls: one per provider request."""
+        calls = tuple(Call(self.name, ms, True, 1) for ms in timings)
+        return [
+            RawAnswer(
+                a.distribution,
+                cost_usd=a.cost_usd,
+                calibrated=a.calibrated,
+                calls=calls,
+            )
+            for a in answers
+        ]
+
+    def _one(
+        self, litellm: Any, q: Question, context: Context
+    ) -> tuple[RawAnswer, float]:
+        start = time.perf_counter()
+        response = litellm.completion(**self._letter_call(q, context))
+        return self._letter_answer(q, response), (time.perf_counter() - start) * 1000
 
     def decide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         litellm = _import_litellm()
         if self.logprobs:
+            self._check_options(questions)
             try:
-                return [
-                    self._letter_answer(
-                        q, litellm.completion(**self._letter_call(q, context))
+                workers = min(MAX_CONCURRENT, max(1, len(questions)))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    done = list(
+                        pool.map(lambda q: self._one(litellm, q, context), questions)
                     )
-                    for q in questions
-                ]
+                return self._with_calls([a for a, _ in done], [ms for _, ms in done])
             except Exception as err:
                 if not _rejects_logprobs(litellm, err):
                     raise
@@ -191,14 +236,21 @@ class LLMEngine:
     ) -> Sequence[RawAnswer]:
         litellm = _import_litellm()
         if self.logprobs:
-            try:
-                answers = []
-                for q in questions:
+            self._check_options(questions)
+            gate = asyncio.Semaphore(MAX_CONCURRENT)
+
+            async def one(q: Question) -> tuple[RawAnswer, float]:
+                async with gate:
+                    start = time.perf_counter()
                     response = await litellm.acompletion(
                         **self._letter_call(q, context)
                     )
-                    answers.append(self._letter_answer(q, response))
-                return answers
+                    ms = (time.perf_counter() - start) * 1000
+                return self._letter_answer(q, response), ms
+
+            try:
+                done = await asyncio.gather(*(one(q) for q in questions))
+                return self._with_calls([a for a, _ in done], [ms for _, ms in done])
             except Exception as err:
                 if not _rejects_logprobs(litellm, err):
                     raise

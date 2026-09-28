@@ -65,7 +65,7 @@ def fake(monkeypatch):
     return install
 
 
-def test_distribution_from_letter_logprobs_is_calibrated(fake):
+def test_distribution_from_letter_logprobs(fake):
     lit = fake(
         lambda m, kw: lp_response([("A", 0.7), (" b", 0.2), ("C", 0.05), ("Z", 0.05)])
     )
@@ -74,7 +74,9 @@ def test_distribution_from_letter_logprobs_is_calibrated(fake):
         ["billing", "tech", "sales"],
         engine=LLMEngine("openai/x", logprobs=True),
     )
-    assert d.value == "billing" and d.calibrated
+    assert (
+        d.value == "billing" and not d.calibrated
+    )  # token probabilities, not calibrated
     assert d.distribution["billing"] == pytest.approx(0.7 / 0.95)
     assert d.distribution["tech"] == pytest.approx(0.2 / 0.95)
     call = lit.calls[0]
@@ -148,7 +150,7 @@ def test_dict_shaped_logprobs(fake):
 def test_too_many_options_for_letters():
     q = jt.Question.choice("q", [str(i) for i in range(27)])
     with pytest.raises(LLMError, match="up to 26"):
-        LLMEngine("m", logprobs=True)._letter_call(q, None)
+        LLMEngine("m", logprobs=True)._check_options([q])
 
 
 def test_spec_parsing():
@@ -166,3 +168,99 @@ def test_spec_can_be_saved_to_guard_toml(tmp_path):
     assert (
         'engine = "llm:openai/qwen?logprobs"' in (tmp_path / "guard.toml").read_text()
     )
+
+
+def test_option_limit_is_local_and_keeps_logprobs_enabled(fake):
+    lit = fake(lambda m, kw: lp_response([("A", 0.9), ("B", 0.1)]))
+    engine = LLMEngine("openai/x", logprobs=True)
+    too_many = [str(i) for i in range(27)]
+    with pytest.raises(LLMError, match="up to 26 options"):
+        jt.choice("q", too_many, engine=engine)
+    assert engine.logprobs is True and lit.calls == []  # no request, no fallback
+    d = jt.choice("q", ["a", "b"], engine=engine)
+    assert d.value == "a" and lit.calls[-1].get("logprobs")
+
+
+def test_bad_request_mentioning_logprobs_falls_back(fake):
+    def handler(m, kw):
+        if kw.get("logprobs"):
+            raise m.BadRequestError("this model does not support logprobs")
+        return json_response('{"answers": {"q0": {"yes": 0.8, "no": 0.2}}}')
+
+    lit = fake(handler)
+
+    class BadRequestError(Exception):
+        pass
+
+    lit.BadRequestError = BadRequestError
+    engine = LLMEngine("openai/x", logprobs=True)
+    assert jt.yesno("q", engine=engine).value == "yes" and engine.logprobs is False
+
+
+def test_batch_questions_run_concurrently_in_order(fake):
+    import threading
+
+    lock, state = threading.Lock(), {"now": 0, "peak": 0}
+    gate = threading.Barrier(3, timeout=2)
+
+    def handler(m, kw):
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        gate.wait()  # only passes if all three requests are in flight together
+        with lock:
+            state["now"] -= 1
+        letter = "A" if "first" in kw["messages"][1]["content"] else "B"
+        return lp_response([(letter, 1.0)])
+
+    fake(handler)
+    qs = [
+        jt.Question.yesno("first"),
+        jt.Question.yesno("second"),
+        jt.Question.yesno("third"),
+    ]
+    out = jt.batch(qs, engine=LLMEngine("openai/x", logprobs=True))
+    assert state["peak"] == 3
+    assert [d.value for d in out] == ["yes", "no", "no"]
+
+
+def test_async_batch_runs_concurrently(fake):
+    lit = fake(lambda m, kw: lp_response([("A", 1.0)]))
+    active = {"now": 0, "peak": 0}
+
+    async def acompletion(**kw):
+        active["now"] += 1
+        active["peak"] = max(active["peak"], active["now"])
+        await asyncio.sleep(0.01)
+        active["now"] -= 1
+        return lp_response([("A", 1.0)])
+
+    lit.acompletion = acompletion
+    qs = [jt.Question.yesno(str(i)) for i in range(5)]
+    asyncio.run(jt.abatch(qs, engine=LLMEngine("openai/x", logprobs=True)))
+    assert active["peak"] == 5
+
+
+def test_plain_dict_response_is_read(fake):
+    def handler(m, kw):
+        return {
+            "choices": [
+                {
+                    "logprobs": {
+                        "content": [{"top_logprobs": [{"token": "B", "logprob": 0.0}]}]
+                    }
+                }
+            ]
+        }
+
+    fake(handler)
+    d = jt.choice("q", ["a", "b"], engine=LLMEngine("openai/x", logprobs=True))
+    assert d.value == "b"
+
+
+def test_each_request_is_reported_as_a_call(fake):
+    fake(lambda m, kw: lp_response([("A", 1.0)]))
+    qs = [jt.Question.yesno(str(i)) for i in range(3)]
+    out = jt.batch(qs, engine=LLMEngine("openai/x", logprobs=True))
+    assert len(out[0].calls) == 3
+    assert all(c.engine == "llm:openai/x" and c.questions == 1 for c in out[0].calls)
