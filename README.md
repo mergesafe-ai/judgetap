@@ -56,6 +56,7 @@ sj.configure(sj.Cascade([jev, flash]))
 | `jev` | TypeSafe Jev (hosted) | `TYPESAFE_API_KEY` |
 | `jev@<url>` / `typesafe:<url>` | Any TypeSafe-compatible server | none on localhost; remote needs the key and https |
 | `laya` | Laya, open weights, runs in process (`pip install "judgetap[laya]"`) | none |
+| `julia` / `julia:<path>` | [Julia-1](https://huggingface.co/SupersonicLabs/Julia-1), 144M open weights, runs in process on CPU (download into `~/.judgetap/models/Julia-1` and `pip install -e` it; relative paths never come from the working directory). Loads per process, so for the guard prefer a server engine | none |
 | `agentjev` / `agentjev:<url>` | A local AgentJev server | none |
 | `llm:<model>` | Any LiteLLM model (`pip install "judgetap[llm]"`); probabilities self-reported | the provider's |
 

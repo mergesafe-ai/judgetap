@@ -36,6 +36,7 @@ sj.batch([...questions], context=...)                -> list[Decision]  # one pa
 |---|---|---|
 | `jev` | hosted (TypeSafe console, Vercel AI Gateway) | native batch; the reference shape |
 | `laya` | local, open weights (Apache-2.0) | via transformers; GPU optional |
+| `julia` | local, open weights (Apache-2.0), 144M | Julia-1 runtime from its model repo; CPU by default; Jev-shaped API; 2-20 options per question |
 | `agentjev` | local, open weights | ~50 ms per pass |
 | `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (reading logprobs is a later enhancement) |
 

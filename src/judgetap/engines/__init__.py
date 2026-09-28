@@ -46,12 +46,16 @@ def load(spec: str | None = None) -> Engine:
         from judgetap.engines.laya import DEFAULT_MODEL, LayaEngine
 
         return LayaEngine(model=arg or DEFAULT_MODEL)
+    if name == "julia":
+        from judgetap.engines.julia import JuliaEngine
+
+        return JuliaEngine(path=arg or None)
     if name == "agentjev":
         from judgetap.engines.agentjev import DEFAULT_URL, AgentJevEngine
 
         return AgentJevEngine(url=arg or DEFAULT_URL)
     raise JudgetapError(
-        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev"
+        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, julia, agentjev"
     )
 
 
