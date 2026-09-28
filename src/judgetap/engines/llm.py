@@ -23,7 +23,13 @@ import math
 import string
 import time
 from collections.abc import Sequence
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    FIRST_EXCEPTION,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from typing import Any
 
 from judgetap.engine import Call, Context, RawAnswer, plain_context
@@ -232,21 +238,32 @@ class LLMEngine:
     ) -> list[RawAnswer]:
         record: list[Call] = []
         workers = min(MAX_CONCURRENT, max(1, len(questions)))
-        pool = ThreadPoolExecutor(max_workers=workers)
-        futures = [
-            pool.submit(self._one, litellm, q, context, record) for q in questions
-        ]
-        # Watch completion order, not question order: a slow early question
-        # mustn't hide a later failure while workers keep sending the queue.
-        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
-        failed = next((f for f in futures if f in done and f.exception()), None)
+        futures: list[Future[RawAnswer]] = []
+        pending: set[Future[RawAnswer]] = set()
+        failed: Future[RawAnswer] | None = None
+        # Submit at most `workers` at a time and stop submitting at the first
+        # failure seen, so a failing provider isn't sent the rest of the queue.
+        # Completion order is watched, not question order: a slow early
+        # question mustn't hide a later failure.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for q in questions:
+                if len(pending) >= workers:
+                    # Any completion frees a slot; a failure is among `done`.
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    failed = next((f for f in done if f.exception()), None)
+                    if failed is not None:
+                        break
+                future = pool.submit(self._one, litellm, q, context, record)
+                futures.append(future)
+                pending.add(future)
+            if failed is None and pending:
+                done, pending = wait(pending, return_when=FIRST_EXCEPTION)
+                failed = next((f for f in done if f.exception()), None)
+            # Leaving the block waits for running requests, which can't be
+            # interrupted, so their Call records are complete.
         if failed is not None:
-            # Stop what hasn't started; running requests can't be interrupted
-            # but are waited for so their Call records are complete.
-            pool.shutdown(wait=True, cancel_futures=True)
             err = failed.exception()
             raise _LogprobsFailed(err, record) from err
-        pool.shutdown(wait=True)
         answers = [f.result() for f in futures]
         return self._with_calls(answers, record)
 

@@ -312,6 +312,7 @@ def run(
     can't vouch for the action either."""
     start = time.perf_counter()
     code, err_text = 0, ""
+    action = payload = None
     try:
         try:
             payload = json.load(stdin)
@@ -347,6 +348,11 @@ def run(
             "judgetap guard failed before finishing its check",
             error=f"{type(err).__name__}: {err}",
         )
+        if record and action is not None:
+            try:  # best effort: the ask must reach the agent whatever happens
+                log(action, verdict, (payload or {}).get("session_id"))
+            except Exception:  # noqa: BLE001, S110
+                pass
         out, code, err_text = respond(verdict, agent)
     if out is not None:
         json.dump(out, stdout)

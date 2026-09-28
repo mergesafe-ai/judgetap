@@ -176,7 +176,8 @@ def test_repo_rules_cannot_talk_the_judge_past_a_rules_only_ask():
         judge(),
     )
     assert (v.outcome, v.layer, v.rule) == ("ask", "rules", "rules-only")
-    assert v.reason.startswith("the judge's allow isn't trusted with repo rules")
+    assert v.reason.startswith("the judge ran and allowed this")
+    assert "no engine" not in v.reason
     assert v.engine == "fake"
 
 
@@ -190,3 +191,14 @@ def test_repo_rules_still_tighten():
 def test_judge_allow_stands_without_repo_rules():
     v = check(act("terraform apply"), judge())
     assert (v.outcome, v.layer) == ("allow", "judge")
+
+
+def test_engine_failure_on_a_file_write_asks():
+    class Broken(StaticEngine):
+        def decide(self, questions, context):
+            raise TimeoutError("slow")
+
+    v = check(
+        act(path="/w/notes.md", content="hello"), Broken(lambda q, c: {}, name="b")
+    )
+    assert v.outcome == "ask" and "TimeoutError" in v.error
