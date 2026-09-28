@@ -18,10 +18,10 @@ its p:
 - a bare label (older versions): p=1.0, uncalibrated.
 
 Loaded models are cached per process (by model id, at most
-MAX_CACHED_MODELS, least recently used evicted). Every call goes through that
-cache, so a model is loaded again only after it was evicted. A model passed
-in as `extractor=` bypasses the cache entirely: it is used as given, never
-stored in or evicted from it. The guard refuses this engine: its hook is a new
+MAX_CACHED_MODELS, least recently used evicted). An engine built from a model
+id goes through that cache on every call, so the model is loaded again only
+after it was evicted. A model passed in as `extractor=` bypasses the cache
+entirely: it is used as given, never stored in or evicted from it. The guard refuses this engine: its hook is a new
 process per action, so the model would load on every guarded action.
 """
 

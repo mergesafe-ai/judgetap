@@ -387,3 +387,43 @@ def test_later_failure_is_seen_while_an_earlier_question_is_slow(fake, monkeypat
         )
     # Waiting in question order would let the second worker drain all 8.
     assert len(lit.calls) <= 3
+
+
+def test_async_provider_rejecting_logprobs_falls_back_to_json(fake):
+    def handler(m, kw):
+        if kw.get("logprobs"):
+            raise m.UnsupportedParamsError("logprobs is not supported")
+        return json_response('{"answers": {"q0": {"yes": 0.8, "no": 0.2}}}')
+
+    lit = fake(handler)
+    engine = LLMEngine("openai/x", logprobs=True)
+    d = asyncio.run(jt.ayesno("q", engine=engine))
+    assert d.value == "yes" and not d.calibrated and engine.logprobs is False
+    assert [c.ok for c in d.calls] == [False, True]  # rejected call kept
+    asyncio.run(jt.ayesno("q", engine=engine))
+    assert sum(1 for c in lit.calls if c.get("logprobs")) == 1
+
+
+def test_async_other_errors_are_not_swallowed(fake):
+    fake(lambda m, kw: (_ for _ in ()).throw(RuntimeError("rate limited")))
+    engine = LLMEngine("openai/x", logprobs=True)
+    with pytest.raises(RuntimeError):
+        asyncio.run(jt.ayesno("q", engine=engine))
+    assert engine.logprobs is True
+
+
+def test_sync_stops_submitting_after_a_failure(fake, monkeypatch):
+    import judgetap.engines.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "MAX_CONCURRENT", 2)
+
+    def handler(m, kw):
+        raise RuntimeError("down")
+
+    lit = fake(handler)
+    with pytest.raises(RuntimeError):
+        jt.batch(
+            [jt.Question.yesno(str(i)) for i in range(10)],
+            engine=LLMEngine("openai/x", logprobs=True),
+        )
+    assert len(lit.calls) <= 2

@@ -521,3 +521,29 @@ def test_unexpected_failure_after_read_asks_not_allows(tmp_path, monkeypatch, ag
         assert json.loads(text)["permission"] == "ask"
     else:
         assert json.loads(text)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_unexpected_failure_ask_is_logged(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("path resolution blew up")
+
+    monkeypatch.setattr(hook, "_decide", boom)
+    hook.run(io.StringIO(json.dumps(bash("git push --force", tmp_path))), io.StringIO())
+    entry = json.loads((tmp_path / "home" / "guard.jsonl").read_text().splitlines()[-1])
+    assert "ask" in json.dumps(entry) and "RuntimeError" in json.dumps(entry)
+
+
+def test_unexpected_failure_logging_never_raises(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("decide failed")
+
+    def log_boom(*a, **k):
+        raise ValueError("log failed")
+
+    monkeypatch.setattr(hook, "_decide", boom)
+    monkeypatch.setattr(hook, "log", log_boom)
+    out = io.StringIO()
+    hook.run(io.StringIO(json.dumps(bash("git push --force", tmp_path))), out)
+    assert (
+        json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"] == "ask"
+    )
