@@ -56,7 +56,7 @@ sj.configure(sj.Cascade([jev, flash]))
 | `jev` | TypeSafe Jev (hosted) | `TYPESAFE_API_KEY` |
 | `jev@<url>` / `typesafe:<url>` | Any TypeSafe-compatible server | none on localhost; remote needs the key and https |
 | `laya` | Laya, open weights, runs in process (`pip install "judgetap[laya]"`) | none |
-| `gliner[:<hf model>]` | Fastino GLiNER2.5-Decide, 340M encoder, CPU or GPU (`pip install "judgetap[gliner]"`); winner probability exact, other labels share the rest | none |
+| `gliner[:<hf model>]` | Fastino GLiNER2.5-Decide, 340M encoder, CPU or GPU (`pip install "judgetap[gliner]"`); a full probability map is used as is when gliner2 returns one, otherwise the winner's probability is exact and the other labels share the rest evenly; a bare label is uncalibrated. Loads per process, so for the guard prefer a server engine | none |
 | `agentjev` / `agentjev:<url>` | A local AgentJev server | none |
 | `llm:<model>` | Any LiteLLM model (`pip install "judgetap[llm]"`); probabilities self-reported | the provider's |
 

@@ -117,3 +117,60 @@ def test_gliner_spec_can_be_saved(tmp_path):
 
     write_engine(tmp_path, "gliner")
     assert 'engine = "gliner"' in (tmp_path / "guard.toml").read_text()
+
+
+def test_load_and_classify_failures_are_gliner_errors(monkeypatch):
+    import sys
+    import types
+
+    from judgetap.engines import gliner as gmod
+
+    monkeypatch.setattr(gmod, "_models", {})
+    fake = types.ModuleType("gliner2")
+
+    class Boom:
+        @staticmethod
+        def from_pretrained(model):
+            raise OSError("network down")
+
+    fake.AutoExtractor = Boom
+    monkeypatch.setitem(sys.modules, "gliner2", fake)
+    with pytest.raises(gmod.GlinerError, match="could not load") as info:
+        gmod.GlinerEngine()._get()
+    assert isinstance(info.value.__cause__, OSError)
+
+    class Bad:
+        def classify_text(self, text, tasks, **kw):
+            raise RuntimeError("cuda oom")
+
+    with pytest.raises(gmod.GlinerError, match="classification failed"):
+        gmod.GlinerEngine(extractor=Bad()).decide([jt.Question.yesno("q")], "x")
+
+
+def test_model_loads_once_per_process_even_concurrently(monkeypatch):
+    import sys
+    import threading
+    import types
+
+    from judgetap.engines import gliner as gmod
+
+    monkeypatch.setattr(gmod, "_models", {})
+    loads = []
+    fake = types.ModuleType("gliner2")
+
+    class Auto:
+        @staticmethod
+        def from_pretrained(model):
+            loads.append(model)
+            threading.Event().wait(0.02)
+            return object()
+
+    fake.AutoExtractor = Auto
+    monkeypatch.setitem(sys.modules, "gliner2", fake)
+    engines = [gmod.GlinerEngine() for _ in range(5)]
+    threads = [threading.Thread(target=e._get) for e in engines]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(loads) == 1 and len({id(e._extractor) for e in engines}) == 1

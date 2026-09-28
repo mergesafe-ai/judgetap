@@ -11,13 +11,19 @@ What comes back depends on the gliner2 code path:
   probability is exact, and the remaining mass is split evenly over the other
   labels, because gliner2 doesn't report them;
 - a bare label (older versions): p=1.0 and `calibrated=False`, so a cascade
-  never escalates on it.
+  never escalates on it, and the guard only lets it tighten (never allow what
+  rules-only mode would ask about).
+
+Loaded models are cached per process (by model id). The guard hook is a new
+process per action, so an in-process model still loads on every guarded
+action there: for the guard, prefer a server engine.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -26,10 +32,13 @@ from judgetap.errors import JudgetapError
 from judgetap.types import NO, YES, Question
 
 DEFAULT_MODEL = "fastino/GLiNER2.5-Decide"
+_models: dict[str, Any] = {}
+_models_lock = threading.Lock()
 
 
 class GlinerError(JudgetapError):
-    """gliner2 is missing, failed, or answered in an unexpected shape."""
+    """gliner2 is missing, failed to load or classify, or answered in an
+    unexpected shape. The underlying exception is chained."""
 
 
 def _task(q: Question) -> dict[str, Any]:
@@ -68,14 +77,22 @@ class GlinerEngine:
         self._extractor = extractor
 
     def _get(self) -> Any:
-        if self._extractor is None:  # loaded once, reused across calls
-            try:
-                from gliner2 import AutoExtractor
-            except ImportError as err:
-                raise GlinerError(
-                    "the gliner engine needs gliner2: pip install 'judgetap[gliner]'"
-                ) from err
-            self._extractor = AutoExtractor.from_pretrained(self.model)
+        if self._extractor is not None:
+            return self._extractor
+        # One load per process and model, even with concurrent first calls.
+        with _models_lock:
+            if self.model not in _models:
+                try:
+                    from gliner2 import AutoExtractor
+                except ImportError as err:
+                    raise GlinerError(
+                        "the gliner engine needs gliner2: pip install 'judgetap[gliner]'"
+                    ) from err
+                try:
+                    _models[self.model] = AutoExtractor.from_pretrained(self.model)
+                except Exception as err:
+                    raise GlinerError(f"could not load {self.model}: {err}") from err
+            self._extractor = _models[self.model]
         return self._extractor
 
     def decide(
@@ -85,9 +102,12 @@ class GlinerEngine:
         tasks = {i: _task(q) for i, q in zip(ids, questions, strict=True)}
         extractor, text = self._get(), _text(context)
         try:
-            result = extractor.classify_text(text, tasks, include_confidence=True)
-        except TypeError:
-            result = extractor.classify_text(text, tasks)  # no confidence support
+            try:
+                result = extractor.classify_text(text, tasks, include_confidence=True)
+            except TypeError:
+                result = extractor.classify_text(text, tasks)  # no confidence support
+        except Exception as err:
+            raise GlinerError(f"gliner2 classification failed: {err}") from err
         try:
             answers = []
             for i, q in zip(ids, questions, strict=True):
