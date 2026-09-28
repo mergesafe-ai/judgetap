@@ -142,7 +142,7 @@ def download(suite: Suite) -> list[dict[str, Any]]:
                 )
             break
         for item in rows:
-            cases.append(_to_case(suite, names, item, offset + len(cases)))
+            cases.append(_to_case(suite, names, item, len(cases)))
         offset += len(rows)
     if not cases:
         raise JudgetapError(f"suite {suite.name!r} downloaded no rows")

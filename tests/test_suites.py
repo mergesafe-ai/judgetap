@@ -167,3 +167,17 @@ def test_cli_suite_failure_is_a_clean_error(cache, monkeypatch, capsys):
     assert main(["--suite", "ag_news", "--engines", "x"]) == 1
     err = capsys.readouterr().err
     assert "offline" in err and "Traceback" not in err
+
+
+def test_malformed_row_on_later_page_reports_its_own_index(cache, monkeypatch):
+    real = fake_api(250, [])
+
+    def get(url):
+        page = real(url)
+        if "offset=100" in url:
+            page["rows"][5]["row"] = {"text": "x"}
+        return page
+
+    monkeypatch.setattr(suites, "_get_json", get)
+    with pytest.raises(sj.JudgetapError, match=r"malformed row 105\b"):
+        suites.suite_path("ag_news")

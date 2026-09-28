@@ -17,8 +17,8 @@ escape it (`../x` is rejected): the guard runs inside untrusted repos, which
 must not be able to supply the model that judges them. $JUDGETAP_JULIA_DEVICE picks the device (default `cpu`).
 
 Loaded models are cached per process (path, device), at most
-MAX_CACHED_MODELS of them (least recently used evicted), so a long-running
-program loads each once. The guard hook is a new process per action, so an
+MAX_CACHED_MODELS of them (least recently used evicted). Every call goes
+through that cache, so a model is loaded again only after it was evicted. The guard hook is a new process per action, so an
 in-process model still loads on every guarded action there: for the guard,
 prefer a server engine (AgentJev, or a TypeSafe-compatible URL).
 """
@@ -97,13 +97,14 @@ class JuliaEngine:
             path or os.environ.get("JUDGETAP_JULIA_PATH") or DEFAULT_PATH
         )
         self.device = device or os.environ.get("JUDGETAP_JULIA_DEVICE") or "cpu"
-        self._runtime = runtime  # the loaded model, kept between calls
+        self._runtime = runtime  # an injected model; otherwise the shared cache
 
     def _get_runtime(self) -> Any:
         if self._runtime is not None:
             return self._runtime
         key = (self.path, self.device)
-        # One load per process and model, even with concurrent first calls.
+        # Concurrent first calls load once; the model is not pinned on the
+        # instance, so each call refreshes the LRU and eviction frees it.
         with _models_lock:
             if key in _models:
                 _models[key] = _models.pop(key)  # mark most recently used
@@ -125,8 +126,7 @@ class JuliaEngine:
                 )
                 while len(_models) > MAX_CACHED_MODELS:
                     del _models[next(iter(_models))]
-            self._runtime = _models[key]
-        return self._runtime
+            return _models[key]
 
     def decide(
         self, questions: Sequence[Question], context: Context

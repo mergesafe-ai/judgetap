@@ -211,3 +211,37 @@ def test_model_loads_once_per_process_even_concurrently(monkeypatch):
     for t in threads:
         t.join()
     assert len(loads) == 1 and len({id(e._extractor) for e in engines}) == 1
+
+
+def test_instance_hits_refresh_lru_and_do_not_pin_evicted(monkeypatch):
+    from judgetap.engines import gliner as gmod
+
+    loads = []
+    mod = types.ModuleType("gliner2")
+
+    class AutoExtractor:
+        @staticmethod
+        def from_pretrained(name):
+            loads.append(name)
+            return Fake({})
+
+    mod.AutoExtractor = AutoExtractor
+    monkeypatch.setitem(sys.modules, "gliner2", mod)
+    monkeypatch.setattr(gmod, "_models", {})
+    a, b, c = GlinerEngine("a"), GlinerEngine("b"), GlinerEngine("c")
+    a._get()
+    b._get()
+    a._get()  # a hit on the same instance marks a most recently used
+    c._get()  # evicts b, not a
+    assert list(gmod._models) == ["a", "c"]
+    assert b._extractor is None  # the evicted model is not kept alive by b
+    b._get()
+    assert loads == ["a", "b", "c", "b"]
+
+
+def test_injected_extractor_bypasses_cache(monkeypatch):
+    from judgetap.engines import gliner as gmod
+
+    monkeypatch.setattr(gmod, "_models", {})
+    ex = Fake({})
+    assert GlinerEngine(extractor=ex)._get() is ex and gmod._models == {}

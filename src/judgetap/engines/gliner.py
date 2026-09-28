@@ -18,7 +18,8 @@ its p:
 - a bare label (older versions): p=1.0, uncalibrated.
 
 Loaded models are cached per process (by model id, at most
-MAX_CACHED_MODELS). The guard refuses this engine: its hook is a new process
+MAX_CACHED_MODELS, least recently used evicted). Every call goes through that
+cache, so a model is loaded again only after it was evicted. The guard refuses this engine: its hook is a new process
 per action, so the model would load on every guarded action.
 """
 
@@ -84,7 +85,8 @@ class GlinerEngine:
     def _get(self) -> Any:
         if self._extractor is not None:
             return self._extractor
-        # One load per process and model, even with concurrent first calls.
+        # Concurrent first calls load once; the model is not pinned on the
+        # instance, so each call refreshes the LRU and eviction frees it.
         with _models_lock:
             if self.model not in _models:
                 try:
@@ -101,8 +103,7 @@ class GlinerEngine:
                     del _models[next(iter(_models))]  # oldest load first
             else:
                 _models[self.model] = _models.pop(self.model)  # most recently used
-            self._extractor = _models[self.model]
-        return self._extractor
+            return _models[self.model]
 
     def decide(
         self, questions: Sequence[Question], context: Context
