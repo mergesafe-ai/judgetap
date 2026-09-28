@@ -18,6 +18,12 @@ def _guard_stop(args) -> int:
     return run()
 
 
+def _guard_prune(args) -> int:
+    from judgetap.guard.prune import run
+
+    return run(args.agent)
+
+
 def _guard_post(args) -> int:
     from judgetap.guard.loop import run
 
@@ -314,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     gsub.add_parser(
         "post", help="run as Claude Code's PostToolUse hook (loop detection)"
     ).set_defaults(func=_guard_post)
+    prune = gsub.add_parser(
+        "prune", help="run as Cursor's or Codex's after-tool hook (shadow pruning)"
+    )
+    prune.add_argument("--agent", choices=["cursor", "codex"], required=True)
+    prune.set_defaults(func=_guard_prune)
     gsub.add_parser(
         "stop", help="run as Claude Code's Stop hook (experimental task-done check)"
     ).set_defaults(func=_guard_stop)
