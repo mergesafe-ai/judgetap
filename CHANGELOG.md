@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.0](https://github.com/mergesafe-ai/judgetap/compare/v0.2.0...v0.3.0) (2026-09-28)
+
+
+### Features
+
+* **engines:** GLiNER2.5-Decide engine ([#93](https://github.com/mergesafe-ai/judgetap/issues/93)) ([dae8a41](https://github.com/mergesafe-ai/judgetap/commit/dae8a4105994a59c84fe2ab33567b4a69a39829c))
+* **engines:** Julia-1 on-device engine ([#90](https://github.com/mergesafe-ai/judgetap/issues/90)) ([97538c1](https://github.com/mergesafe-ai/judgetap/commit/97538c125c0fc6bc4a1f7f89ed1ac5b45f6293e3))
+* **engines:** llm logprobs mode for calibrated label probabilities ([#91](https://github.com/mergesafe-ai/judgetap/issues/91)) ([b0494f4](https://github.com/mergesafe-ai/judgetap/commit/b0494f4b71dfb673a8db2c4094395c79cd37fb02))
+* **eval:** judgetap eval --suite loader for public suites (AG News, Banking77) ([#99](https://github.com/mergesafe-ai/judgetap/issues/99)) ([2d3c54c](https://github.com/mergesafe-ai/judgetap/commit/2d3c54caf87afd89c7f4c7c8e515298606e90866))
+* **guard:** shadow-mode output pruning estimate ([#27](https://github.com/mergesafe-ai/judgetap/issues/27), [#29](https://github.com/mergesafe-ai/judgetap/issues/29)) ([#110](https://github.com/mergesafe-ai/judgetap/issues/110)) ([6254ace](https://github.com/mergesafe-ai/judgetap/commit/6254acec399f9d67a4b1470d72edb454ed3d754f))
+
+
+### Bug Fixes
+
+* follow-ups from [#105](https://github.com/mergesafe-ai/judgetap/issues/105) and [#107](https://github.com/mergesafe-ai/judgetap/issues/107) ([#109](https://github.com/mergesafe-ai/judgetap/issues/109)) ([b4df5da](https://github.com/mergesafe-ai/judgetap/commit/b4df5da45cdb623c4827a5dd3122a05ff183598c))
+* follow-ups from [#91](https://github.com/mergesafe-ai/judgetap/issues/91) and [#93](https://github.com/mergesafe-ai/judgetap/issues/93) (llm logprobs calls, hook missing tool name) ([#105](https://github.com/mergesafe-ai/judgetap/issues/105)) ([a280f26](https://github.com/mergesafe-ai/judgetap/commit/a280f2668748dd9764f859c63da2c9e9a2975662))
+* **guard:** repo rules can't talk the judge past a rules-only ask ([#100](https://github.com/mergesafe-ai/judgetap/issues/100)) ([#103](https://github.com/mergesafe-ai/judgetap/issues/103)) ([0dcf8af](https://github.com/mergesafe-ai/judgetap/commit/0dcf8afaf54b4c089a51bb730454ddf3fd53f180))
+* **julia:** models-dir install docs, reject ../ escapes, bound model cache ([#96](https://github.com/mergesafe-ai/judgetap/issues/96)) ([1d0b509](https://github.com/mergesafe-ai/judgetap/commit/1d0b5099fa9889766e426c5e0e4ccecc4cfc125c))
+* plain reason for rules-capped judge allow; non-vacuous concurrent cache tests ([#106](https://github.com/mergesafe-ai/judgetap/issues/106)) ([#107](https://github.com/mergesafe-ai/judgetap/issues/107)) ([43492da](https://github.com/mergesafe-ai/judgetap/commit/43492daa9c307769cad5521ca731254e1ea92b1b))
+* route every model call through the LRU cache; report malformed row index once ([#98](https://github.com/mergesafe-ai/judgetap/issues/98), [#101](https://github.com/mergesafe-ai/judgetap/issues/101)) ([#104](https://github.com/mergesafe-ai/judgetap/issues/104)) ([6656556](https://github.com/mergesafe-ai/judgetap/commit/66565565ddb5a5412080394071a1005499bce269))
+
+
+### Documentation
+
+* restore the name and link of Micha0827/snapjudge (broken by the rename) ([#92](https://github.com/mergesafe-ai/judgetap/issues/92)) ([f27c172](https://github.com/mergesafe-ai/judgetap/commit/f27c1720ca5e31a67de9b1c80d1104377582311c))
+
 ## [0.2.0](https://github.com/mergesafe-ai/judgetap/compare/v0.1.0...v0.2.0) (2026-09-27)
 
 
