@@ -7,8 +7,10 @@ Hugging Face on first use.
 
 What comes back depends on the gliner2 code path. Only a full `probabilities`
 map covering every option is marked `calibrated`; anything less is
-`calibrated=False`, so a cascade doesn't read it as a trustworthy p:
-- a full `probabilities` map per head (the classifier path): used as is;
+`calibrated=False`, so a cascade escalates it to its next engine whatever
+its p:
+- a full `probabilities` map per head (the classifier path): renormalised
+  over the options, calibrated;
 - a map missing some options: renormalised over the ones present, uncalibrated;
 - `{"label", "confidence"}` (the extractor path): the winner gets its score
   and the other labels split the rest evenly, uncalibrated (gliner2 doesn't

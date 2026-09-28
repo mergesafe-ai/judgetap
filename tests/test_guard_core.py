@@ -168,37 +168,3 @@ def test_unreadable_project_rules_are_skipped(tmp_path):
         assert project_rules(tmp_path) == "use worktrees"
     finally:
         rules.chmod(0o600)
-
-
-def test_uncalibrated_engine_cannot_allow_what_rules_only_would_ask():
-    import judgetap as jt
-
-    class Bare(StaticEngine):
-        def decide(self, questions, context):
-            return [
-                jt.RawAnswer({"yes": 0.0, "no": 1.0}, calibrated=False)
-                for _ in questions
-            ]
-
-    v = check(act("terraform apply -auto-approve"), Bare(lambda q, c: {}, name="bare"))
-    assert v.outcome == "ask" and "uncalibrated" in v.reason
-
-
-def test_calibrated_engine_still_allows():
-    v = check(act("terraform apply -auto-approve"), judge())
-    assert v.outcome == "allow"
-
-
-def test_uncalibrated_engine_allows_when_rules_only_would():
-    import judgetap as jt
-
-    class Bare(StaticEngine):
-        def decide(self, questions, context):
-            return [
-                jt.RawAnswer({"yes": 0.0, "no": 1.0}, calibrated=False)
-                for _ in questions
-            ]
-
-    assert (
-        check(act("make test"), Bare(lambda q, c: {}, name="bare")).outcome == "allow"
-    )

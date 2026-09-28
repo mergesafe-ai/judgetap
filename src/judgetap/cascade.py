@@ -175,11 +175,16 @@ class Cascade:
     def _pending(self, questions, attempts) -> list[int]:
         return [i for i in range(len(questions)) if not self._confident(attempts[i])]
 
-    def _confident(self, attempts: Sequence[Attempt]) -> bool:
+    def _confident(self, attempts: Sequence[Attempt], *, final: bool = False) -> bool:
+        """Whether the latest answer stops the cascade. An uncalibrated p
+        (calibrated=False) never stops it while another engine is left to
+        ask; once none is (final), it is judged on p like any other."""
+        last = attempts[-1] if attempts else None
         return (
-            bool(attempts)
-            and attempts[-1].p is not None
-            and (attempts[-1].p >= self.escalate_below)
+            last is not None
+            and last.p is not None
+            and last.p >= self.escalate_below
+            and (final or last.answer is None or last.answer.calibrated)
         )
 
     def _record(self, engine, questions, pending, answers, attempts) -> None:
@@ -220,7 +225,7 @@ class Cascade:
         hops = _hops(attempts)
         answered = [a for a in attempts if a.answer is not None]
         spent = _spent(attempts)
-        if self._confident(attempts):
+        if self._confident(attempts, final=True):
             return _as_result(attempts[-1], hops, spent)
         if callable(self.on_exhausted):
             raw = RawAnswer(

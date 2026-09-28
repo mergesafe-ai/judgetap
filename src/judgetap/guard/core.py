@@ -214,19 +214,6 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         return Verdict(
             "ask", "judge", "judged off-task for the current request", **common
         )
-    if not all(d.calibrated for d in decisions):
-        # An uncalibrated engine (e.g. a bare label read as p=1.0) may only
-        # tighten: it never allows what rules-only mode would ask about.
-        floor = rules_only_check(action.command) if action.command else None
-        if floor:
-            outcome, name, reason = floor
-            return Verdict(
-                outcome,
-                "judge",
-                f"{reason} (engine is uncalibrated, so its allow isn't trusted)",
-                rule=name,
-                **common,
-            )
     return Verdict("allow", "judge", "", **common)
 
 

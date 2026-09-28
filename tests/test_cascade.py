@@ -229,3 +229,27 @@ def test_from_config_scalar_cascade_is_a_config_error(tmp_path):
     cfg.write_text('cascade = "jev"\n')
     with pytest.raises(sj.JudgetapError):
         from_config(cfg)
+
+
+class Uncalibrated(StaticEngine):
+    def decide(self, questions, context):
+        self.calls.append((tuple(questions), context))
+        return [
+            sj.RawAnswer({"yes": 0.0, "no": 1.0}, calibrated=False) for _ in questions
+        ]
+
+
+def test_uncalibrated_answer_escalates_whatever_its_p():
+    bare, strong = Uncalibrated(lambda q, c: {}, name="bare"), eng("strong", 0.9)
+    d = sj.yesno("q", engine=sj.Cascade([bare, strong]))
+    assert (d.engine, d.meta["hops"]) == ("strong", ["bare", "strong"])
+
+
+def test_last_engine_uncalibrated_answer_is_judged_on_p():
+    d = sj.yesno(
+        "q",
+        engine=sj.Cascade(
+            [eng("cheap", 0.6), Uncalibrated(lambda q, c: {}, name="bare")]
+        ),
+    )
+    assert d.engine == "bare" and d.calibrated is False
