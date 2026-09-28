@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -194,13 +195,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="judgetap eval", description=__doc__.split("\n")[0]
     )
-    parser.add_argument("cases", help="JSONL file of labelled cases")
+    parser.add_argument("cases", nargs="?", help="JSONL file of labelled cases")
+    parser.add_argument(
+        "--suite", help="public suite instead of a file (ag_news, banking77)"
+    )
+    parser.add_argument(
+        "--limit", type=int, help="deterministic sample of N cases (fixed seed)"
+    )
     parser.add_argument(
         "--engines", required=True, help="comma-separated specs, e.g. jev,laya"
     )
     parser.add_argument("--json", action="store_true", help="JSON instead of Markdown")
     args = parser.parse_args(argv)
-    cases = load_cases(args.cases)
+    if (args.cases is None) == (args.suite is None):
+        parser.error("give exactly one of a cases file or --suite")
+    if args.suite is not None:
+        from judgetap.suites import suite_path
+
+        if not args.suite.strip():
+            parser.error("--suite needs a suite name (ag_news, banking77)")
+        try:
+            path: str | Path = suite_path(args.suite)
+        except JudgetapError as err:
+            print(f"judgetap eval: {err}", file=sys.stderr)
+            return 1
+    else:
+        path = args.cases
+    from judgetap.suites import sample
+
+    cases = sample(load_cases(path), args.limit)
     reports = [evaluate(cases, load(spec)) for spec in args.engines.split(",")]
     print(to_json(reports) if args.json else to_markdown(reports), end="")
     return 0
