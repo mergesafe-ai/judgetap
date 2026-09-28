@@ -305,9 +305,7 @@ def run(
         try:
             payload = json.load(stdin)
             if not isinstance(payload, dict):
-                raise TypeError(
-                    f"expected a JSON object, got {type(payload).__name__}"
-                )
+                raise TypeError(f"expected a JSON object, got {type(payload).__name__}")
             payload = normalise(payload, agent)
             action = action_from_hook(payload)
         except Exception as err:  # noqa: BLE001 -- unreadable input fails closed
