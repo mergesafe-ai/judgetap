@@ -36,6 +36,7 @@ sj.batch([...questions], context=...)                -> list[Decision]  # one pa
 |---|---|---|
 | `jev` | hosted (TypeSafe console, Vercel AI Gateway) | native batch; the reference shape |
 | `laya` | local, open weights (Apache-2.0) | via transformers; GPU optional |
+| `gliner` | local, open weights (Apache-2.0), Fastino GLiNER2.5-Decide via `gliner2` | all questions as heads in one pass; full probabilities when gliner2 returns them, else the winner's probability with the rest split evenly, else the label alone (`calibrated=False`) |
 | `agentjev` | local, open weights | ~50 ms per pass |
 | `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (reading logprobs is a later enhancement) |
 

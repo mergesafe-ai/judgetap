@@ -17,6 +17,7 @@ snapjudge = "judgetap.cli:main"  # deprecated alias, removed after one release
 [project.optional-dependencies]
 llm = ["litellm>=1.40"]
 laya = ["laya"]
+gliner = ["gliner2"]
 keychain = ["keyring>=24"]
 
 [build-system]

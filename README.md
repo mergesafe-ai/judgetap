@@ -56,10 +56,11 @@ sj.configure(sj.Cascade([jev, flash]))
 | `jev` | TypeSafe Jev (hosted) | `TYPESAFE_API_KEY` |
 | `jev@<url>` / `typesafe:<url>` | Any TypeSafe-compatible server | none on localhost; remote needs the key and https |
 | `laya` | Laya, open weights, runs in process (`pip install "judgetap[laya]"`) | none |
+| `gliner[:<hf model>]` | Fastino GLiNER2.5-Decide, 340M encoder, CPU or GPU (`pip install "judgetap[gliner]"`); winner probability exact, other labels share the rest | none |
 | `agentjev` / `agentjev:<url>` | A local AgentJev server | none |
 | `llm:<model>` | Any LiteLLM model (`pip install "judgetap[llm]"`); probabilities self-reported | the provider's |
 
-On a CPU-only Linux box, install the CPU PyTorch wheel before `judgetap[laya]` (`pip install torch --index-url https://download.pytorch.org/whl/cpu`). [judgetap by Micha0827](https://github.com/Micha0827/judgetap) is a TypeSafe-compatible local server for Apple Silicon (MLX), an independent project that works as a `jev@http://127.0.0.1:<port>` engine.
+On a CPU-only Linux box, install the CPU PyTorch wheel before `judgetap[laya]` (`pip install torch --index-url https://download.pytorch.org/whl/cpu`). [snapjudge by Micha0827](https://github.com/Micha0827/snapjudge) is a TypeSafe-compatible local server for Apple Silicon (MLX), an independent project that works as a `jev@http://127.0.0.1:<port>` engine.
 
 ## Guard details
 

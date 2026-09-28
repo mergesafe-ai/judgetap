@@ -50,8 +50,13 @@ def load(spec: str | None = None) -> Engine:
         from judgetap.engines.agentjev import DEFAULT_URL, AgentJevEngine
 
         return AgentJevEngine(url=arg or DEFAULT_URL)
+    if name == "gliner":
+        from judgetap.engines.gliner import DEFAULT_MODEL as GLINER_MODEL
+        from judgetap.engines.gliner import GlinerEngine
+
+        return GlinerEngine(model=arg or GLINER_MODEL)
     raise JudgetapError(
-        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev"
+        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev, gliner"
     )
 
 

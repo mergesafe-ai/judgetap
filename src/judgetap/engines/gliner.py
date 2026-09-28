@@ -1,0 +1,103 @@
+"""GLiNER2.5-Decide (Fastino, Apache-2.0) in process, through `gliner2`.
+
+A 340M DeBERTa encoder that picks labels for several questions ("heads") in
+one forward pass, on CPU or GPU (huggingface.co/fastino/GLiNER2.5-Decide).
+Needs `pip install 'judgetap[gliner]'`; the checkpoint downloads from
+Hugging Face on first use.
+
+What comes back depends on the gliner2 code path:
+- a full `probabilities` map per head (the classifier path): used as is;
+- `{"label", "confidence"}` (the extractor path): the winner's softmax
+  probability is exact, and the remaining mass is split evenly over the other
+  labels, because gliner2 doesn't report them;
+- a bare label (older versions): p=1.0 and `calibrated=False`, so a cascade
+  never escalates on it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from judgetap.engine import Context, RawAnswer, plain_context
+from judgetap.errors import JudgetapError
+from judgetap.types import NO, YES, Question
+
+DEFAULT_MODEL = "fastino/GLiNER2.5-Decide"
+
+
+class GlinerError(JudgetapError):
+    """gliner2 is missing, failed, or answered in an unexpected shape."""
+
+
+def _task(q: Question) -> dict[str, Any]:
+    """One classification head: its labels, with the question as the prompt."""
+    labels = [YES, NO] if q.kind == "yesno" else list(q.options)
+    return {"labels": labels, "prompt": q.text}
+
+
+def _text(context: Context) -> str:
+    state = plain_context(context)
+    return state if isinstance(state, str) else json.dumps(state)
+
+
+def _distribution(q: Question, answer: Any) -> tuple[dict[str, float], bool]:
+    """(distribution over the question's options, calibrated)."""
+    options = list(q.options)
+    if isinstance(answer, Mapping) and isinstance(answer.get("probabilities"), Mapping):
+        probs = {str(k): float(v) for k, v in answer["probabilities"].items()}
+        total = sum(probs.get(o, 0.0) for o in options)
+        if total > 0:
+            return {o: probs.get(o, 0.0) / total for o in options}, True
+    if isinstance(answer, Mapping) and "label" in answer:
+        label, p = str(answer["label"]), float(answer.get("confidence", 1.0))
+        rest = (1.0 - p) / (len(options) - 1) if len(options) > 1 else 0.0
+        return {o: (p if o == label else rest) for o in options}, "confidence" in answer
+    if isinstance(answer, Mapping) and "value" in answer:
+        answer = answer["value"]
+    label = str(answer)
+    return {o: (1.0 if o == label else 0.0) for o in options}, False
+
+
+class GlinerEngine:
+    def __init__(self, model: str = DEFAULT_MODEL, *, extractor: Any = None) -> None:
+        self.name = "gliner"
+        self.model = model
+        self._extractor = extractor
+
+    def _get(self) -> Any:
+        if self._extractor is None:  # loaded once, reused across calls
+            try:
+                from gliner2 import AutoExtractor
+            except ImportError as err:
+                raise GlinerError(
+                    "the gliner engine needs gliner2: pip install 'judgetap[gliner]'"
+                ) from err
+            self._extractor = AutoExtractor.from_pretrained(self.model)
+        return self._extractor
+
+    def decide(
+        self, questions: Sequence[Question], context: Context
+    ) -> Sequence[RawAnswer]:
+        ids = [f"q{i}" for i in range(len(questions))]
+        tasks = {i: _task(q) for i, q in zip(ids, questions, strict=True)}
+        extractor, text = self._get(), _text(context)
+        try:
+            result = extractor.classify_text(text, tasks, include_confidence=True)
+        except TypeError:
+            result = extractor.classify_text(text, tasks)  # no confidence support
+        try:
+            answers = []
+            for i, q in zip(ids, questions, strict=True):
+                dist, calibrated = _distribution(q, result[i])
+                answers.append(RawAnswer(dist, cost_usd=0.0, calibrated=calibrated))
+            return answers
+        except (KeyError, TypeError, ValueError) as err:
+            raise GlinerError(f"unexpected gliner2 result shape: {err!r}") from err
+
+    async def adecide(
+        self, questions: Sequence[Question], context: Context
+    ) -> Sequence[RawAnswer]:
+        return await asyncio.to_thread(self.decide, questions, context)
