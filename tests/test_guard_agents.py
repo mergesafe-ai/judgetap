@@ -39,7 +39,7 @@ def test_cursor_deny_ask_and_allow(tmp_path):
 def test_cursor_always_answers_even_on_bad_input():
     out = io.StringIO()
     hook.run(io.StringIO("nope"), out, io.StringIO(), agent="cursor")
-    assert json.loads(out.getvalue())["permission"] == "allow"
+    assert json.loads(out.getvalue())["permission"] == "ask"
 
 
 def test_codex_blocks_with_exit_2_and_stderr(tmp_path):

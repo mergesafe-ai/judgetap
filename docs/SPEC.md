@@ -37,6 +37,7 @@ sj.batch([...questions], context=...)                -> list[Decision]  # one pa
 | `jev` | hosted (TypeSafe console, Vercel AI Gateway) | native batch; the reference shape |
 | `laya` | local, open weights (Apache-2.0) | via transformers; GPU optional |
 | `julia` | local, open weights (Apache-2.0), 144M | Julia-1 runtime from its model repo; CPU by default; Jev-shaped API; 2-20 options per question |
+| `gliner` | local, open weights (Apache-2.0), Fastino GLiNER2.5-Decide via `gliner2` | all questions as heads in one pass; full probabilities when gliner2 returns them, else the winner's probability with the rest split evenly, else the label alone (`calibrated=False`) |
 | `agentjev` | local, open weights | ~50 ms per pass |
 | `llm` | any structured-output LLM via LiteLLM | OpenAI, Gemini, Anthropic, Ollama; probabilities are the model's own JSON estimate, flagged `calibrated=False` (see `?logprobs` below) |
 | `llm:<model>?logprobs` | same, OpenAI-compatible servers exposing `logprobs` | options listed as letters, one single-token call per question; the distribution is the letters' `top_logprobs` renormalised (missing letters get 0, none present is an error); token probabilities, not calibrated (`calibrated=False`; check with `judgetap eval`); per-question calls run concurrently (max 8) and each is reported as a Call; more than 26 options is a local error raised before any request; falls back to JSON mode for good if the provider rejects logprobs |
@@ -52,7 +53,7 @@ escalate_below = 0.8      # p under this goes to the next engine
 on_exhausted = "raise"    # or "return_last", or a callback (e.g. ask a human)
 ```
 
-Each hop is recorded on the `Decision`. Engine errors and timeouts fall through the same way.
+Each hop is recorded on the `Decision`. Engine errors and timeouts fall through the same way, and so does an uncalibrated answer (`calibrated=False`) whatever its p, while an engine is left to ask; the last engine's answer is judged on p alone.
 
 ### 4. Calibration check
 

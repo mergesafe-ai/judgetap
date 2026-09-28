@@ -167,7 +167,11 @@ def _engine():
     if not spec:
         return None
     from judgetap.engines import load
+    from judgetap.guard.install import in_process_error
 
+    if error := in_process_error(spec):
+        # Caught by the caller: rules only, failing closed.
+        raise RuntimeError(error)
     engine = load(spec)
     # The engine looked the key up once when built; reuse that, don't hit the
     # keychain a second time on every guarded action.
@@ -292,14 +296,30 @@ def run(
     record: bool = True,
     agent: str = "claude-code",
 ) -> int:
-    """Hook entry point; returns the exit code. Failures never block: they
-    allow the action and say so, since a crashing hook is ignored anyway."""
+    """Hook entry point; returns the exit code. Input the guard can't read
+    asks the user (it never saw the action, so it can't vouch for it); any
+    later failure allows the action and says so."""
     start = time.perf_counter()
     code, err_text = 0, ""
     try:
-        payload = normalise(json.load(stdin), agent)
-        action = action_from_hook(payload)
-        if action is None:
+        try:
+            payload = json.load(stdin)
+            if not isinstance(payload, dict):
+                raise TypeError(f"expected a JSON object, got {type(payload).__name__}")
+            payload = normalise(payload, agent)
+            action = action_from_hook(payload)
+        except Exception as err:  # noqa: BLE001 -- unreadable input fails closed
+            verdict = Verdict(
+                "ask",
+                "none",
+                "couldn't read the hook input",
+                error=f"{type(err).__name__}: {err}",
+            )
+            out, code, err_text = respond(verdict, agent)
+            action = payload = None
+        if payload is None:
+            pass
+        elif action is None:
             out = {"permission": "allow"} if agent == "cursor" else None
         else:
             verdict = _decide(action, start, payload.get("session_id"))

@@ -74,10 +74,15 @@ def test_log_records_decision_without_file_contents(tmp_path):
     assert "SECRET_BODY" not in "".join(lines)
 
 
-def test_garbage_input_never_blocks():
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "null", "[]", '"Bash"', '{"tool_name": "Bash", "tool_input": 1}'],
+)
+def test_unreadable_input_asks(raw):
     out = io.StringIO()
-    assert hook.run(io.StringIO("not json"), out) == 0
-    assert "failed and allowed" in json.loads(out.getvalue())["systemMessage"]
+    assert hook.run(io.StringIO(raw), out) == 0
+    decision = json.loads(out.getvalue())["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
 
 
 def test_bad_engine_spec_degrades_to_rules_and_says_so(tmp_path, monkeypatch):
