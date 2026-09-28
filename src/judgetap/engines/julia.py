@@ -10,15 +10,24 @@ model repo rather than on PyPI:
     pip install -e ./Julia-1
 
 Spec `julia` loads the checkpoint at $JUDGETAP_JULIA_PATH (default
-`Julia-1`); `julia:<path>` names it. $JUDGETAP_JULIA_DEVICE picks the device
-(default `cpu`; `cuda` needs a BF16-capable GPU).
+`~/.judgetap/models/Julia-1`); `julia:<path>` names it. A relative path is
+taken from ~/.judgetap/models, never the working directory: the guard runs
+inside untrusted repos, which must not be able to supply the model that
+judges them. $JUDGETAP_JULIA_DEVICE picks the device (default `cpu`).
+
+Loaded models are cached per process (path, device), so a long-running
+program loads each once. The guard hook is a new process per action, so an
+in-process model still loads on every guarded action there: for the guard,
+prefer a server engine (AgentJev, or a TypeSafe-compatible URL).
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from judgetap.engine import Context, RawAnswer, plain_context
@@ -27,6 +36,22 @@ from judgetap.errors import JudgetapError
 from judgetap.types import NO, YES, Question
 
 DEFAULT_PATH = "Julia-1"
+_models: dict[tuple[str, str], Any] = {}
+_models_lock = threading.Lock()
+
+
+def _models_dir() -> Path:
+    from judgetap.guard.hook import home
+
+    return home() / "models"
+
+
+def resolve_path(path: str) -> str:
+    """Absolute paths as given; anything else under ~/.judgetap/models."""
+    p = Path(path).expanduser()
+    return str(p if p.is_absolute() else _models_dir() / p)
+
+
 # Julia's native limits: 2-20 options per question.
 MIN_OPTIONS, MAX_OPTIONS = 2, 20
 
@@ -53,27 +78,35 @@ class JuliaEngine:
         runtime: Any = None,
     ) -> None:
         self.name = "julia"
-        self.path = path or os.environ.get("JUDGETAP_JULIA_PATH") or DEFAULT_PATH
+        self.path = resolve_path(
+            path or os.environ.get("JUDGETAP_JULIA_PATH") or DEFAULT_PATH
+        )
         self.device = device or os.environ.get("JUDGETAP_JULIA_DEVICE") or "cpu"
         self._runtime = runtime  # the loaded model, kept between calls
 
     def _get_runtime(self) -> Any:
-        if self._runtime is None:
-            try:
-                from julia import load_model
-            except ImportError as err:
-                raise JuliaError(
-                    "the julia engine needs the Julia-1 runtime: download "
-                    "SupersonicLabs/Julia-1 from Hugging Face and "
-                    "`pip install -e ./Julia-1`"
-                ) from err
-            self._runtime = load_model(
-                self.path,
-                device=self.device,
-                strict_encoding=True,
-                max_length=8192,
-                head_length=512,
-            )
+        if self._runtime is not None:
+            return self._runtime
+        key = (self.path, self.device)
+        # One load per process and model, even with concurrent first calls.
+        with _models_lock:
+            if key not in _models:
+                try:
+                    from julia import load_model
+                except ImportError as err:
+                    raise JuliaError(
+                        "the julia engine needs the Julia-1 runtime: download "
+                        "SupersonicLabs/Julia-1 from Hugging Face into "
+                        "~/.judgetap/models/Julia-1 and `pip install -e` it"
+                    ) from err
+                _models[key] = load_model(
+                    self.path,
+                    device=self.device,
+                    strict_encoding=True,
+                    max_length=8192,
+                    head_length=512,
+                )
+            self._runtime = _models[key]
         return self._runtime
 
     def decide(

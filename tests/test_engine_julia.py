@@ -102,7 +102,7 @@ def test_too_many_options_raise_before_loading(fake_julia):
 
 def test_missing_runtime_explains_install(monkeypatch):
     monkeypatch.setitem(sys.modules, "julia", None)
-    with pytest.raises(JuliaError, match="pip install -e ./Julia-1"):
+    with pytest.raises(JuliaError, match="pip install -e"):
         jt.yesno("q", engine=JuliaEngine())
 
 
@@ -116,9 +116,10 @@ def test_async_path():
     assert [x.value for x in d] == ["no", "billing", "high"]
 
 
-def test_load_specs(monkeypatch):
+def test_load_specs(monkeypatch, tmp_path):
     monkeypatch.delenv("JUDGETAP_JULIA_PATH", raising=False)
-    assert load("julia").path == "Julia-1"
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    assert load("julia").path == str(tmp_path / "models" / "Julia-1")
     assert load("julia:/opt/Julia-1").path == "/opt/Julia-1"
     assert load("julia").name == "julia"
 
@@ -128,3 +129,41 @@ def test_install_accepts_julia_spec(tmp_path):
 
     write_engine(tmp_path, "julia:/opt/Julia-1")
     assert 'engine = "julia:/opt/Julia-1"' in (tmp_path / "guard.toml").read_text()
+
+
+def test_relative_paths_resolve_under_judgetap_home_not_cwd(tmp_path, monkeypatch):
+    from judgetap.engines.julia import JuliaEngine
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    assert JuliaEngine().path == str(tmp_path / "home" / "models" / "Julia-1")
+    assert JuliaEngine("/abs/Julia-1").path == "/abs/Julia-1"
+
+
+def test_model_loads_once_per_process_even_concurrently(tmp_path, monkeypatch):
+    import sys
+    import threading
+    import types
+
+    from judgetap.engines import julia as jmod
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setattr(jmod, "_models", {})
+    loads = []
+    fake = types.ModuleType("julia")
+
+    def load_model(path, **kw):
+        loads.append(path)
+        threading.Event().wait(0.02)
+        return object()
+
+    fake.load_model = load_model
+    monkeypatch.setitem(sys.modules, "julia", fake)
+    engines = [jmod.JuliaEngine() for _ in range(5)]
+    threads = [threading.Thread(target=e._get_runtime) for e in engines]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(loads) == 1
+    assert len({id(e._runtime) for e in engines}) == 1
