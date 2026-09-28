@@ -3,6 +3,7 @@
 load("jev")                       -> TypeSafe Jev (TYPESAFE_API_KEY)
 load("jev:jev-1.13.0")            -> Jev pinned to a model version
 load("llm:openai/gpt-4o-mini")    -> any LiteLLM model (pip install judgetap[llm])
+    load("llm:openai/m?logprobs")     -> same, probabilities from token logprobs
 """
 
 from __future__ import annotations
@@ -41,11 +42,18 @@ def load(spec: str | None = None) -> Engine:
             raise JudgetapError("llm engine needs a model, e.g. llm:openai/gpt-4o-mini")
         from judgetap.engines.llm import LLMEngine
 
-        return LLMEngine(model=arg)
+        model, _, flags = arg.partition("?")
+        if flags not in ("", "logprobs"):
+            raise JudgetapError(f"unknown llm option {flags!r}; known: logprobs")
+        return LLMEngine(model=model, logprobs=flags == "logprobs")
     if name == "laya":
         from judgetap.engines.laya import DEFAULT_MODEL, LayaEngine
 
         return LayaEngine(model=arg or DEFAULT_MODEL)
+    if name == "julia":
+        from judgetap.engines.julia import JuliaEngine
+
+        return JuliaEngine(path=arg or None)
     if name == "agentjev":
         from judgetap.engines.agentjev import DEFAULT_URL, AgentJevEngine
 
@@ -56,7 +64,7 @@ def load(spec: str | None = None) -> Engine:
 
         return GlinerEngine(model=arg or GLINER_MODEL)
     raise JudgetapError(
-        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, agentjev, gliner"
+        f"unknown engine {name!r} in spec {spec!r}; known: jev, jev@<url>, typesafe:<url>, llm, laya, julia, agentjev, gliner"
     )
 
 

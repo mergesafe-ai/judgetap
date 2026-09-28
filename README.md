@@ -56,6 +56,7 @@ sj.configure(sj.Cascade([jev, flash]))
 | `jev` | TypeSafe Jev (hosted) | `TYPESAFE_API_KEY` |
 | `jev@<url>` / `typesafe:<url>` | Any TypeSafe-compatible server | none on localhost; remote needs the key and https |
 | `laya` | Laya, open weights, runs in process (`pip install "judgetap[laya]"`) | none |
+| `julia` / `julia:<path>` | [Julia-1](https://huggingface.co/SupersonicLabs/Julia-1), 144M open weights, runs in process on CPU (download into `~/.judgetap/models/Julia-1` and `pip install -e` it; relative paths never come from the working directory). Loads per process, so for the guard prefer a server engine | none |
 | `gliner[:<hf model>]` | Fastino GLiNER2.5-Decide, 340M encoder, CPU or GPU (`pip install "judgetap[gliner]"`); only a full probability map over every option counts as calibrated; a winner-only score (the others share the rest evenly) or a bare label is uncalibrated. Loads in-process, so the guard refuses it: use a server engine there | none |
 | `agentjev` / `agentjev:<url>` | A local AgentJev server | none |
 | `llm:<model>` | Any LiteLLM model (`pip install "judgetap[llm]"`); probabilities self-reported | the provider's |
@@ -83,6 +84,31 @@ Every PR here is reviewed by [MergeSafe](https://mergesafe.ai) before merge. A f
 ## Status
 
 Early development. Design in [docs/SPEC.md](docs/SPEC.md); roadmap in the issues.
+
+## Open judge models
+
+Open models now match Jev on most decision tasks. LangWatch's comparison reports, over the tasks each model could run: Jev 81.9%, Eikos-27B 80.0%, Shisa DE-1 79.7%, AutoJev-27B 78.9% ([langwatch.ai/compare/jev-vs-all](https://langwatch.ai/compare/jev-vs-all); their numbers, not ours). Run one behind any OpenAI-compatible server and use it through the `llm` engine in **logprobs** mode, which reads each option's probability from the model's token logprobs instead of asking for JSON:
+
+```bash
+# vLLM (GPU; a 27B model needs roughly an H100):
+vllm serve <hf-repo-of-the-model> --served-model-name judge
+# or Ollama:
+ollama serve   # after `ollama pull <model>`
+```
+
+```python
+import os
+
+import judgetap as jt
+
+os.environ["OPENAI_API_BASE"] = (
+    "http://127.0.0.1:8000/v1"  # vLLM; Ollama: http://127.0.0.1:11434/v1
+)
+os.environ["OPENAI_API_KEY"] = "local"  # any value for a local server
+jt.configure(jt.engines.load("llm:openai/judge?logprobs"))
+```
+
+Logprobs mode makes one short call per question (one generated token), run concurrently (up to 8 at a time), and each call is counted in the metrics. The probabilities come from the model's token distribution; they are not calibrated (answers stay `calibrated=False`), so use `judgetap eval` to check how well they track accuracy on your cases. If the server doesn't support logprobs, the engine falls back to JSON mode on its own.
 
 ## Contributing
 
