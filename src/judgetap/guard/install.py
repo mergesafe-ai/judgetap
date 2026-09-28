@@ -206,6 +206,21 @@ SPEC_PATTERN = re.compile(r"[A-Za-z0-9:_./@+\[\]-]+")  # [ ] for IPv6 hosts
 KNOWN_ENGINES = frozenset({"jev", "llm", "laya", "agentjev", "typesafe", "gliner"})
 
 
+# Engines that load a model into the calling process. The guard hook is a new
+# process per action, so these would reload the model on every guarded action.
+IN_PROCESS_ENGINES = frozenset({"gliner"})
+
+
+def in_process_error(spec: str) -> str | None:
+    name = spec.partition(":")[0].partition("@")[0]
+    if name in IN_PROCESS_ENGINES:
+        return (
+            f"{name} loads its model in-process, and the guard hook is a new process "
+            "per action; use a server engine for the guard"
+        )
+    return None
+
+
 def validate_engine(spec: str):
     """Check a spec fully and return the engine it builds (no network, no key
     needed). Raises ValueError for anything that can't be saved."""
@@ -215,6 +230,8 @@ def validate_engine(spec: str):
         raise ValueError(
             f"unknown engine {spec!r}; known: {', '.join(sorted(KNOWN_ENGINES))}"
         )
+    if error := in_process_error(spec):
+        raise ValueError(error)
     from judgetap.engines import load
 
     try:

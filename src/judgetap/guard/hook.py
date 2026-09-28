@@ -167,7 +167,11 @@ def _engine():
     if not spec:
         return None
     from judgetap.engines import load
+    from judgetap.guard.install import in_process_error
 
+    if error := in_process_error(spec):
+        # Caught by the caller: rules only, failing closed.
+        raise RuntimeError(error)
     engine = load(spec)
     # The engine looked the key up once when built; reuse that, don't hit the
     # keychain a second time on every guarded action.

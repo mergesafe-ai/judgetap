@@ -53,7 +53,7 @@ def test_winner_confidence_is_exact_and_rest_split():
         ["billing", "shipping", "access"],
         engine=GlinerEngine(extractor=fake),
     )
-    assert d.p == pytest.approx(0.7) and d.calibrated
+    assert d.p == pytest.approx(0.7) and not d.calibrated
     assert d.distribution["shipping"] == pytest.approx(0.15)
 
 
@@ -112,11 +112,48 @@ def test_model_loaded_once(monkeypatch):
     )
 
 
-def test_gliner_spec_can_be_saved(tmp_path):
+def test_guard_refuses_gliner(tmp_path, monkeypatch):
+    from judgetap.guard import hook
     from judgetap.guard.install import write_engine
 
-    write_engine(tmp_path, "gliner")
-    assert 'engine = "gliner"' in (tmp_path / "guard.toml").read_text()
+    with pytest.raises(ValueError, match="in-process"):
+        write_engine(tmp_path, "gliner:fastino/GLiNER2.5-multi-Decide")
+    assert not (tmp_path / "guard.toml").exists()
+    # A hand-edited guard.toml fails closed to rules only, without loading.
+    monkeypatch.setattr(hook, "engine_spec", lambda: "gliner")
+    with pytest.raises(RuntimeError, match="in-process"):
+        hook._engine()
+
+
+def test_partial_probability_map_is_uncalibrated():
+    fake = Fake({"q0": {"probabilities": {"billing": 0.6, "shipping": 0.2}}})
+    (d,) = jt.batch(
+        [jt.Question.choice("topic?", ["billing", "shipping", "other"])],
+        "x",
+        engine=GlinerEngine(extractor=fake),
+        log=False,
+    )
+    assert d.value == "billing" and not d.calibrated
+
+
+def test_model_cache_is_bounded(monkeypatch):
+    from judgetap.engines import gliner as gmod
+
+    loads = []
+    mod = types.ModuleType("gliner2")
+
+    class AutoExtractor:
+        @staticmethod
+        def from_pretrained(name):
+            loads.append(name)
+            return Fake({"q0": {"probabilities": {"yes": 0.9, "no": 0.1}}})
+
+    mod.AutoExtractor = AutoExtractor
+    monkeypatch.setitem(sys.modules, "gliner2", mod)
+    monkeypatch.setattr(gmod, "_models", {})
+    for name in ["a", "b", "a", "c", "a", "b"]:
+        GlinerEngine(name)._get()
+    assert list(gmod._models) == ["a", "b"] and loads == ["a", "b", "c", "b"]
 
 
 def test_load_and_classify_failures_are_gliner_errors(monkeypatch):

@@ -5,18 +5,19 @@ one forward pass, on CPU or GPU (huggingface.co/fastino/GLiNER2.5-Decide).
 Needs `pip install 'judgetap[gliner]'`; the checkpoint downloads from
 Hugging Face on first use.
 
-What comes back depends on the gliner2 code path:
+What comes back depends on the gliner2 code path. Only a full `probabilities`
+map covering every option is marked `calibrated`; anything less is
+`calibrated=False`, so a cascade doesn't read it as a trustworthy p:
 - a full `probabilities` map per head (the classifier path): used as is;
-- `{"label", "confidence"}` (the extractor path): the winner's softmax
-  probability is exact, and the remaining mass is split evenly over the other
-  labels, because gliner2 doesn't report them;
-- a bare label (older versions): p=1.0 and `calibrated=False`, so a cascade
-  never escalates on it, and the guard only lets it tighten (never allow what
-  rules-only mode would ask about).
+- a map missing some options: renormalised over the ones present, uncalibrated;
+- `{"label", "confidence"}` (the extractor path): the winner gets its score
+  and the other labels split the rest evenly, uncalibrated (gliner2 doesn't
+  report them, and the score isn't a calibrated probability);
+- a bare label (older versions): p=1.0, uncalibrated.
 
-Loaded models are cached per process (by model id). The guard hook is a new
-process per action, so an in-process model still loads on every guarded
-action there: for the guard, prefer a server engine.
+Loaded models are cached per process (by model id, at most
+MAX_CACHED_MODELS). The guard refuses this engine: its hook is a new process
+per action, so the model would load on every guarded action.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from judgetap.errors import JudgetapError
 from judgetap.types import NO, YES, Question
 
 DEFAULT_MODEL = "fastino/GLiNER2.5-Decide"
+MAX_CACHED_MODELS = 2
 _models: dict[str, Any] = {}
 _models_lock = threading.Lock()
 
@@ -59,11 +61,12 @@ def _distribution(q: Question, answer: Any) -> tuple[dict[str, float], bool]:
         probs = {str(k): float(v) for k, v in answer["probabilities"].items()}
         total = sum(probs.get(o, 0.0) for o in options)
         if total > 0:
-            return {o: probs.get(o, 0.0) / total for o in options}, True
+            complete = all(o in probs for o in options)
+            return {o: probs.get(o, 0.0) / total for o in options}, complete
     if isinstance(answer, Mapping) and "label" in answer:
         label, p = str(answer["label"]), float(answer.get("confidence", 1.0))
         rest = (1.0 - p) / (len(options) - 1) if len(options) > 1 else 0.0
-        return {o: (p if o == label else rest) for o in options}, "confidence" in answer
+        return {o: (p if o == label else rest) for o in options}, False
     if isinstance(answer, Mapping) and "value" in answer:
         answer = answer["value"]
     label = str(answer)
@@ -92,6 +95,10 @@ class GlinerEngine:
                     _models[self.model] = AutoExtractor.from_pretrained(self.model)
                 except Exception as err:
                     raise GlinerError(f"could not load {self.model}: {err}") from err
+                while len(_models) > MAX_CACHED_MODELS:
+                    del _models[next(iter(_models))]  # oldest load first
+            else:
+                _models[self.model] = _models.pop(self.model)  # most recently used
             self._extractor = _models[self.model]
         return self._extractor
 
