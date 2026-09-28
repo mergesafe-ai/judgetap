@@ -30,13 +30,20 @@ ERROR = re.compile(
     r"|\bE\d{3,}\b|\bERR!",
     re.IGNORECASE,
 )
-# A progress line: a bar, or a percentage together with a bar or a counter
-# ("12/340"). A bare percentage (a coverage report, a test summary) isn't one.
-PROGRESS = re.compile(
-    r"[#=█▇▆▅▄▃▂▁]{10,}|\r|\[[#=>\-.\s]{10,}\]|[━─]{10,}"
-    r"|\d{1,3}(\.\d+)?\s?%.*(\d+/\d+|[#=█]{3,})"
-    r"|(\d+/\d+|[#=█]{3,}).*\d{1,3}(\.\d+)?\s?%"
-)
+# A progress line is a bar (10+ bar characters, any style, hyphens included)
+# on a line that also carries a number, or a percentage together with a
+# counter ("12/340"). A bare separator ("-----", no number) and a bare
+# percentage (a coverage report, a test summary) are not progress.
+BAR = re.compile(r"[#=>\-█▇▆▅▄▃▂▁━─]{10,}")
+COUNTED = re.compile(r"\d{1,3}(\.\d+)?\s?%.*\d+/\d+|\d+/\d+.*\d{1,3}(\.\d+)?\s?%")
+
+
+def _is_progress(line: str) -> bool:
+    if "\r" in line or COUNTED.search(line):
+        return True
+    return bool(BAR.search(line)) and any(c.isdigit() for c in BAR.sub("", line))
+
+
 PATHLIKE = re.compile(r"^\s*[\w./@~-]+\.\w+(:\d+)?(:|$)")
 
 
@@ -84,7 +91,7 @@ def label(text: str, tool: str | None = None, failed: bool = False) -> str:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) < 20:
         return "keep"
-    progress = sum(1 for ln in lines if PROGRESS.search(ln)) / len(lines)
+    progress = sum(1 for ln in lines if _is_progress(ln)) / len(lines)
     if progress >= 0.5 or text.count("\r") >= 20:
         return "drop"
     if len(set(lines)) / len(lines) < 0.3:
@@ -143,7 +150,9 @@ def observe(payload: dict[str, Any], failed: bool = False) -> None:
         # doesn't balloon the hook and an error at the end still counts.
         half = SCAN_CHARS // 2
         sample = text if len(text) <= SCAN_CHARS else text[:half] + "\n" + text[-half:]
-        verdict = label(sample, record["tool"], failed)
+        # Errors are searched for in the whole output (a regex scan allocates
+        # nothing); only the line-level rules use the sample.
+        verdict = label(sample, record["tool"], failed or bool(ERROR.search(text)))
         record.update(
             label=verdict,
             output_chars=len(text),

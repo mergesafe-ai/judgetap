@@ -177,3 +177,18 @@ DASHED = "\n".join(f"step {i}/100 [{'-' * 20}] eta 3s" for i in range(100))
 
 def test_dashed_bracket_bars_are_progress():
     assert prune.label(DASHED, "Bash") == "drop"
+
+
+def test_error_in_the_middle_of_a_huge_output_is_kept(tmp_path):
+    half = PROGRESS * 3000
+    prune.observe(_payload(half + "\nfatal: bad object\n" + half))
+    assert _records(tmp_path)[0]["label"] == "keep"
+
+
+BARE = "\n".join(f"{i:3d}% ------------------------ {i}MB" for i in range(100))
+SEPARATORS = "\n".join(("-" * 40) if i % 2 else f"row {i} value x" for i in range(100))
+
+
+def test_bare_hyphen_bars_are_progress_but_separators_are_not():
+    assert prune.label(BARE, "Bash") == "drop"
+    assert prune.label(SEPARATORS, "Bash") != "drop"
