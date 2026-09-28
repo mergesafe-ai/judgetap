@@ -1,6 +1,7 @@
 import asyncio
 import math
 import sys
+import time
 import types
 
 import pytest
@@ -264,3 +265,125 @@ def test_each_request_is_reported_as_a_call(fake):
     out = jt.batch(qs, engine=LLMEngine("openai/x", logprobs=True))
     assert len(out[0].calls) == 3
     assert all(c.engine == "llm:openai/x" and c.questions == 1 for c in out[0].calls)
+
+
+@pytest.mark.parametrize("spec", ["llm:?logprobs", "llm: ?logprobs", "llm: "])
+def test_empty_model_spec_is_rejected(spec):
+    with pytest.raises(jt.JudgetapError):
+        load(spec)
+
+
+def test_unsupported_param_not_about_logprobs_is_raised(fake):
+    def handler(m, kw):
+        raise m.UnsupportedParamsError("temperature is not supported")
+
+    fake(handler)
+    engine = LLMEngine("openai/x", logprobs=True)
+    with pytest.raises(Exception, match="temperature"):
+        jt.yesno("q", engine=engine)
+    assert engine.logprobs is True
+
+
+def test_fallback_keeps_the_rejected_calls_with_the_json_call(fake):
+    def handler(m, kw):
+        if kw.get("logprobs"):
+            raise m.UnsupportedParamsError("logprobs is not supported")
+        return json_response(
+            '{"answers": {"q0": {"yes": 0.8, "no": 0.2}, "q1": {"yes": 0.1, "no": 0.9}}}'
+        )
+
+    fake(handler)
+    out = jt.batch(
+        [jt.Question.yesno("a"), jt.Question.yesno("b")],
+        engine=LLMEngine("openai/x", logprobs=True),
+    )
+    calls = out[0].calls
+    assert [c.ok for c in calls][-1] is True and calls[-1].questions == 2
+    assert calls[:-1] and all(not c.ok and c.questions == 1 for c in calls[:-1])
+
+
+def test_failed_requests_are_reported_on_the_error(fake):
+    def handler(m, kw):
+        if "b" in kw["messages"][1]["content"].split("Question: ")[1][:2]:
+            raise RuntimeError("rate limited")
+        return lp_response([("A", 1.0)])
+
+    fake(handler)
+    with pytest.raises(RuntimeError) as info:
+        jt.batch(
+            [jt.Question.yesno("a"), jt.Question.yesno("b")],
+            engine=LLMEngine("openai/x", logprobs=True),
+        )
+    calls = info.value.calls
+    assert len(calls) == 2 and sorted(c.ok for c in calls) == [False, True]
+
+
+def test_first_failure_cancels_requests_not_yet_sent(fake, monkeypatch):
+    import judgetap.engines.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "MAX_CONCURRENT", 1)
+
+    def handler(m, kw):
+        raise RuntimeError("down")
+
+    lit = fake(handler)
+    with pytest.raises(RuntimeError):
+        jt.batch(
+            [jt.Question.yesno(str(i)) for i in range(5)],
+            engine=LLMEngine("openai/x", logprobs=True),
+        )
+    assert len(lit.calls) < 5
+
+
+def test_async_first_failure_cancels_the_rest(fake):
+    started = []
+
+    class Slow(FakeLiteLLM):
+        async def acompletion(self, **kw):
+            started.append(kw)
+            if len(started) == 1:
+                raise RuntimeError("down")
+            await asyncio.sleep(10)
+
+    mod = Slow(lambda m, kw: None)
+    sys.modules["litellm"] = mod
+    try:
+        engine = LLMEngine("openai/x", logprobs=True)
+        qs = [jt.Question.yesno(str(i)) for i in range(3)]
+
+        async def go():
+            return await asyncio.wait_for(engine.adecide(qs, "s"), timeout=5)
+
+        with pytest.raises(RuntimeError) as info:
+            asyncio.run(go())
+        assert len(info.value.calls) == 3
+        assert not any(c.ok for c in info.value.calls)
+    finally:
+        del sys.modules["litellm"]
+
+
+def test_later_failure_is_seen_while_an_earlier_question_is_slow(fake, monkeypatch):
+    import threading
+
+    import judgetap.engines.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "MAX_CONCURRENT", 2)
+    lock, first = threading.Lock(), []
+
+    def handler(m, kw):
+        with lock:
+            slow = not first
+            first.append(True)
+        if slow:
+            time.sleep(1.0)  # the early question is slow...
+            return lp_response([("A", 0.9), ("B", 0.1)])
+        raise RuntimeError("down")  # ...while a later one fails at once
+
+    lit = fake(handler)
+    with pytest.raises(RuntimeError):
+        jt.batch(
+            [jt.Question.yesno(str(i)) for i in range(8)],
+            engine=LLMEngine("openai/x", logprobs=True),
+        )
+    # Waiting in question order would let the second worker drain all 8.
+    assert len(lit.calls) <= 3

@@ -9,8 +9,10 @@ Two modes:
   validated confidence, so answers are still `calibrated=False`; use
   `judgetap eval` to check how well they track accuracy. One call per
   question (run concurrently, at most MAX_CONCURRENT at once), each generating
-  a single token; every call is reported so metrics count them. If the
-  provider rejects logprobs, the engine falls back to JSON mode for good.
+  a single token; every call, failed ones included, is reported so metrics
+  count them. The first failure cancels requests not yet sent. If the
+  provider rejects logprobs themselves (an error naming logprobs), the engine
+  falls back to JSON mode for good; any other error is raised.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import math
 import string
 import time
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any
 
 from judgetap.engine import Call, Context, RawAnswer, plain_context
@@ -112,8 +114,8 @@ def _rejects_logprobs(litellm: Any, err: Exception) -> bool:
         )
         if isinstance(k, type)
     )
-    if kinds and isinstance(err, getattr(litellm, "UnsupportedParamsError", ())):
-        return True
+    # Either kind can be about some other parameter (response_format, a
+    # typo'd kwarg); only one that names logprobs means logprobs are out.
     return bool(kinds) and isinstance(err, kinds) and "logprob" in str(err).lower()
 
 
@@ -185,10 +187,10 @@ class LLMEngine:
         )
 
     def _with_calls(
-        self, answers: list[RawAnswer], timings: list[float]
+        self, answers: Sequence[RawAnswer], calls: Sequence[Call]
     ) -> list[RawAnswer]:
         """Every answer carries the batch's calls: one per provider request."""
-        calls = tuple(Call(self.name, ms, True, 1) for ms in timings)
+        calls = tuple(calls)
         return [
             RawAnswer(
                 a.distribution,
@@ -200,68 +202,164 @@ class LLMEngine:
         ]
 
     def _one(
-        self, litellm: Any, q: Question, context: Context
-    ) -> tuple[RawAnswer, float]:
+        self, litellm: Any, q: Question, context: Context, record: list[Call]
+    ) -> RawAnswer:
         start = time.perf_counter()
-        response = litellm.completion(**self._letter_call(q, context))
-        return self._letter_answer(q, response), (time.perf_counter() - start) * 1000
+        try:
+            answer = self._letter_answer(
+                q, litellm.completion(**self._letter_call(q, context))
+            )
+        except BaseException:
+            record.append(self._call(start, ok=False))
+            raise
+        record.append(self._call(start, ok=True))
+        return answer
+
+    def _call(self, start: float, *, ok: bool, questions: int = 1) -> Call:
+        return Call(self.name, (time.perf_counter() - start) * 1000, ok, questions)
+
+    def _fail(self, err: Exception, record: Sequence[Call]) -> Exception:
+        """Attach every request made so far (failed ones included) to err."""
+        if record and not getattr(err, "calls", None):
+            try:
+                err.calls = tuple(record)
+            except AttributeError:
+                pass
+        return err
+
+    def _logprobs_sync(
+        self, litellm: Any, questions: Sequence[Question], context: Context
+    ) -> list[RawAnswer]:
+        record: list[Call] = []
+        workers = min(MAX_CONCURRENT, max(1, len(questions)))
+        pool = ThreadPoolExecutor(max_workers=workers)
+        futures = [
+            pool.submit(self._one, litellm, q, context, record) for q in questions
+        ]
+        # Watch completion order, not question order: a slow early question
+        # mustn't hide a later failure while workers keep sending the queue.
+        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+        failed = next((f for f in futures if f in done and f.exception()), None)
+        if failed is not None:
+            # Stop what hasn't started; running requests can't be interrupted
+            # but are waited for so their Call records are complete.
+            pool.shutdown(wait=True, cancel_futures=True)
+            err = failed.exception()
+            raise _LogprobsFailed(err, record) from err
+        pool.shutdown(wait=True)
+        answers = [f.result() for f in futures]
+        return self._with_calls(answers, record)
+
+    async def _logprobs_async(
+        self, litellm: Any, questions: Sequence[Question], context: Context
+    ) -> list[RawAnswer]:
+        record: list[Call] = []
+        gate = asyncio.Semaphore(MAX_CONCURRENT)
+
+        async def one(q: Question) -> RawAnswer:
+            async with gate:
+                start = time.perf_counter()
+                try:
+                    response = await litellm.acompletion(
+                        **self._letter_call(q, context)
+                    )
+                    answer = self._letter_answer(q, response)
+                except asyncio.CancelledError:
+                    record.append(self._call(start, ok=False))  # stopped by us
+                    raise
+                except Exception:
+                    record.append(self._call(start, ok=False))
+                    raise
+                record.append(self._call(start, ok=True))
+            return answer
+
+        tasks = [asyncio.ensure_future(one(q)) for q in questions]
+        try:
+            answers = await asyncio.gather(*tasks)
+        except Exception as err:
+            for t in tasks:
+                t.cancel()  # the first failure decides; stop the rest
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise _LogprobsFailed(err, record) from err
+        return self._with_calls(answers, record)
 
     def decide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         litellm = _import_litellm()
+        record: list[Call] = []
         if self.logprobs:
             self._check_options(questions)
             try:
-                workers = min(MAX_CONCURRENT, max(1, len(questions)))
-                with ThreadPoolExecutor(max_workers=workers) as pool:
-                    done = list(
-                        pool.map(lambda q: self._one(litellm, q, context), questions)
-                    )
-                return self._with_calls([a for a, _ in done], [ms for _, ms in done])
-            except Exception as err:
-                if not _rejects_logprobs(litellm, err):
-                    raise
+                return self._logprobs_sync(litellm, questions, context)
+            except _LogprobsFailed as failed:
+                record = failed.record
+                if not _rejects_logprobs(litellm, failed.err):
+                    raise self._fail(failed.err, record) from None
                 self.logprobs = False  # this provider can't: JSON mode from now on
-        response = litellm.completion(
-            model=self.model,
-            messages=self._messages(questions, context),
-            response_format={"type": "json_object"},
-            **self._kwargs,
-        )
-        return self._parse(questions, response)
+        start = time.perf_counter()
+        try:
+            response = litellm.completion(
+                model=self.model,
+                messages=self._messages(questions, context),
+                response_format={"type": "json_object"},
+                **self._kwargs,
+            )
+            answers = self._parse(questions, response)
+        except Exception as err:  # noqa: BLE001 -- recorded, then re-raised
+            if record:
+                record.append(self._call(start, ok=False, questions=len(questions)))
+            raise self._fail(err, record)
+        return self._json_answers(answers, record, start, len(questions))
 
     async def adecide(
         self, questions: Sequence[Question], context: Context
     ) -> Sequence[RawAnswer]:
         litellm = _import_litellm()
+        record: list[Call] = []
         if self.logprobs:
             self._check_options(questions)
-            gate = asyncio.Semaphore(MAX_CONCURRENT)
-
-            async def one(q: Question) -> tuple[RawAnswer, float]:
-                async with gate:
-                    start = time.perf_counter()
-                    response = await litellm.acompletion(
-                        **self._letter_call(q, context)
-                    )
-                    ms = (time.perf_counter() - start) * 1000
-                return self._letter_answer(q, response), ms
-
             try:
-                done = await asyncio.gather(*(one(q) for q in questions))
-                return self._with_calls([a for a, _ in done], [ms for _, ms in done])
-            except Exception as err:
-                if not _rejects_logprobs(litellm, err):
-                    raise
+                return await self._logprobs_async(litellm, questions, context)
+            except _LogprobsFailed as failed:
+                record = failed.record
+                if not _rejects_logprobs(litellm, failed.err):
+                    raise self._fail(failed.err, record) from None
                 self.logprobs = False
-        response = await litellm.acompletion(
-            model=self.model,
-            messages=self._messages(questions, context),
-            response_format={"type": "json_object"},
-            **self._kwargs,
+        start = time.perf_counter()
+        try:
+            response = await litellm.acompletion(
+                model=self.model,
+                messages=self._messages(questions, context),
+                response_format={"type": "json_object"},
+                **self._kwargs,
+            )
+            answers = self._parse(questions, response)
+        except Exception as err:  # noqa: BLE001 -- recorded, then re-raised
+            if record:
+                record.append(self._call(start, ok=False, questions=len(questions)))
+            raise self._fail(err, record)
+        return self._json_answers(answers, record, start, len(questions))
+
+    def _json_answers(
+        self, answers: list[RawAnswer], record: list[Call], start: float, n: int
+    ) -> list[RawAnswer]:
+        """After a fallback, the rejected logprobs requests are reported with
+        the JSON call; without one, the core times the single call itself."""
+        if not record:
+            return answers
+        return self._with_calls(
+            answers, [*record, self._call(start, ok=True, questions=n)]
         )
-        return self._parse(questions, response)
+
+
+class _LogprobsFailed(Exception):
+    """Internal: a logprobs batch failed; carries the calls it made."""
+
+    def __init__(self, err: Exception, record: list[Call]) -> None:
+        super().__init__(str(err))
+        self.err = err
+        self.record = record
 
 
 def _import_litellm():

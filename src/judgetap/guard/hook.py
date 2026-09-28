@@ -45,8 +45,17 @@ def _text(value: Any) -> str:
 
 def action_from_hook(payload: dict[str, Any]) -> Action | None:
     """The action to check. Parsing never raises on odd field types; if the
-    extras (task, project rules) can't be read, the rules still run."""
-    tool = payload.get("tool_name")
+    extras (task, project rules) can't be read, the rules still run.
+
+    None means a named tool judgetap doesn't guard (Read, Grep, ...): a true
+    non-action, allowed. A missing or empty tool name is not that -- the
+    hook can't tell what is about to run -- so it raises, and the caller
+    fails closed (asks)."""
+    raw = payload.get("tool_name")
+    # Match on the stripped name: "Bash " is still Bash, not an unguarded tool.
+    tool = raw.strip() if isinstance(raw, str) else ""
+    if not tool:
+        raise ValueError(f"hook input has no tool name: {raw!r}")
     if tool not in GUARDED_TOOLS:
         return None
     inp = payload.get("tool_input")
@@ -227,7 +236,8 @@ def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
             "session_id": payload.get("conversation_id"),
             "transcript_path": payload.get("transcript_path"),
         }
-    if agent == "codex" and payload.get("tool_name") in CODEX_SHELL_TOOLS:
+    tool = payload.get("tool_name")
+    if agent == "codex" and isinstance(tool, str) and tool.strip() in CODEX_SHELL_TOOLS:
         # Codex's shell tool is exec_command with tool_input.cmd (str or argv).
         inp = payload.get("tool_input")
         inp = inp if isinstance(inp, dict) else {}
@@ -297,8 +307,9 @@ def run(
     agent: str = "claude-code",
 ) -> int:
     """Hook entry point; returns the exit code. Input the guard can't read
-    asks the user (it never saw the action, so it can't vouch for it); any
-    later failure allows the action and says so."""
+    asks the user (it never saw the action, so it can't vouch for it), and so
+    does any later unexpected failure: the check didn't finish, so the guard
+    can't vouch for the action either."""
     start = time.perf_counter()
     code, err_text = 0, ""
     try:
@@ -329,13 +340,14 @@ def run(
                 except OSError:
                     pass
             out, code, err_text = respond(verdict, agent)
-    except Exception as err:  # noqa: BLE001 -- never break the agent, always say so
-        message = f"judgetap guard failed and allowed the action: {err}"
-        out = (
-            {"permission": "allow", "user_message": message}
-            if agent == "cursor"
-            else {"systemMessage": message}
+    except Exception as err:  # noqa: BLE001 -- never break the agent, fail closed
+        verdict = Verdict(
+            "ask",
+            "none",
+            "judgetap guard failed before finishing its check",
+            error=f"{type(err).__name__}: {err}",
         )
+        out, code, err_text = respond(verdict, agent)
     if out is not None:
         json.dump(out, stdout)
     if err_text:

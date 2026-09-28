@@ -96,7 +96,7 @@ def test_codex_install_uses_shell_matcher(tmp_path):
     path = tmp_path / "hooks.json"
     install(path, "codex")
     entry = json.loads(path.read_text())["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "^(exec_command|shell|Bash)$"
+    assert entry["matcher"] == r"^\s*(exec_command|shell|Bash)\s*$"
     assert entry["hooks"][0]["command"] == f"{HOOK_COMMAND} --agent codex"
     assert uninstall(path, "codex") is True
 
@@ -142,3 +142,43 @@ def test_uninstall_leaves_edited_hook_commands(tmp_path):
     assert json.loads(path.read_text())["hooks"]["beforeShellExecution"] == [
         {"command": edited}
     ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not json",
+        "[]",
+        "{}",
+        '{"tool_name": "", "tool_input": {"cmd": "ls"}}',
+        '{"tool_name": "exec_command", "tool_input": {}}',
+        '{"tool_name": "exec_command", "tool_input": {"cmd": 5}}',
+    ],
+)
+def test_codex_unreadable_input_asks(raw):
+    out, err = io.StringIO(), io.StringIO()
+    code = hook.run(io.StringIO(raw), out, agent="codex", stderr=err)
+    assert code == 2 and "Ask the user" in err.getvalue()
+
+
+@pytest.mark.parametrize("tool", [" exec_command", "shell ", " Bash "])
+def test_padded_codex_shell_name_is_still_guarded(tool):
+    payload = {"tool_name": tool, "tool_input": {"cmd": "rm -rf /"}, "cwd": "/tmp"}
+    out = hook.normalise(payload, "codex")
+    assert out["tool_name"] == "Bash" and out["tool_input"]["command"] == "rm -rf /"
+
+
+@pytest.mark.parametrize("tool", ["exec_command", " exec_command", "shell ", " Bash "])
+def test_codex_matcher_accepts_what_normalise_guards(tool):
+    import re
+
+    from judgetap.guard.install import _entry
+
+    matcher = _entry("codex", "PreToolUse")["matcher"]
+    assert re.search(matcher, tool)
+    assert (
+        hook.normalise({"tool_name": tool, "tool_input": {"cmd": "ls"}}, "codex")[
+            "tool_name"
+        ]
+        == "Bash"
+    )

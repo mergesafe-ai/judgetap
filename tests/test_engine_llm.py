@@ -64,3 +64,9 @@ def test_missing_litellm_explains_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "litellm", None)
     with pytest.raises(LLMError, match=r"judgetap\[llm\]"):
         sj.yesno("q", engine=LLMEngine("openai/x"))
+
+
+def test_llm_model_is_trimmed():
+    from judgetap.engines import load
+
+    assert load("llm: openai/gpt-4o-mini ?logprobs").model == "openai/gpt-4o-mini"

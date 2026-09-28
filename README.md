@@ -108,7 +108,7 @@ os.environ["OPENAI_API_KEY"] = "local"  # any value for a local server
 jt.configure(jt.engines.load("llm:openai/judge?logprobs"))
 ```
 
-Logprobs mode makes one short call per question (one generated token), run concurrently (up to 8 at a time), and each call is counted in the metrics. The probabilities come from the model's token distribution; they are not calibrated (answers stay `calibrated=False`), so use `judgetap eval` to check how well they track accuracy on your cases. If the server doesn't support logprobs, the engine falls back to JSON mode on its own.
+Logprobs mode makes one short call per question (one generated token), run concurrently (up to 8 at a time), and each call is counted in the metrics. The probabilities come from the model's token distribution; they are not calibrated (answers stay `calibrated=False`), so use `judgetap eval` to check how well they track accuracy on your cases. If the server rejects the logprobs parameters with an error that names logprobs, the engine falls back to JSON mode on its own; any other error (including a generic "unsupported parameter" that doesn't mention logprobs) is raised rather than treated as a fallback.
 
 ## Contributing
 
