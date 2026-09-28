@@ -30,22 +30,22 @@ ERROR = re.compile(
     r"|\bE\d{3,}\b|\bERR!",
     re.IGNORECASE,
 )
-# A progress line is a bar on a line that also carries a number, or a
-# percentage together with a counter ("12/340"). A bar is any run of 8+
-# symbol characters, whatever it is drawn with: solid, segmented
-# ("[#####.....]", "▰▰▱▱"), hyphens or box drawing. A bare separator
-# ("-----", no number) and a bare percentage (a coverage report) are not
-# progress. Every pattern here is a single character-class run, so matching
-# is linear in the line length.
+# A progress line carries at least two of the three progress signals: a
+# percentage, a counter ("12/340") and a bar (any run of 8+ symbol
+# characters, whatever it is drawn with), or a carriage return. One signal
+# alone isn't progress: a bar alone is a diff stat ("| 12 ++++----") or a
+# dotted leader, a percentage alone is a coverage report. Every pattern is a
+# single character-class run, so matching is linear in the line length.
 BAR = re.compile(r"[^\w\s]{8,}")
 PERCENT = re.compile(r"\d\s?%")
 COUNTER = re.compile(r"\d/\d")
 
 
 def _is_progress(line: str) -> bool:
-    if "\r" in line or (PERCENT.search(line) and COUNTER.search(line)):
+    if "\r" in line:
         return True
-    return bool(BAR.search(line)) and any(c.isdigit() for c in BAR.sub("", line))
+    signals = (PERCENT.search(line), COUNTER.search(line), BAR.search(line))
+    return sum(1 for m in signals if m) >= 2
 
 
 PATHLIKE = re.compile(r"^\s*[\w./@~-]+\.\w+(:\d+)?(:|$)")

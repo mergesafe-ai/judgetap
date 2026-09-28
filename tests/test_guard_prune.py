@@ -194,6 +194,15 @@ def test_bare_hyphen_bars_are_progress_but_separators_are_not():
     assert prune.label(SEPARATORS, "Bash") != "drop"
 
 
+DIFFSTAT = "\n".join(f" src/mod{i}.py | {i + 3} +++++++-----" for i in range(100))
+LEADERS = "\n".join(f"Chapter {i} ........................ {i * 3}" for i in range(100))
+
+
+@pytest.mark.parametrize("text", [DIFFSTAT, LEADERS, COVERAGE])
+def test_a_single_progress_signal_is_not_progress(text):
+    assert prune.label(text, "Bash") != "drop"
+
+
 @pytest.mark.parametrize(
     "bar",
     ["[#######.....]", "▰▰▰▰▱▱▱▱▱▱", "|██████░░░░|", "(=====-----)", "━━━━━╸━━━━━"],
