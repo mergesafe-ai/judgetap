@@ -167,3 +167,33 @@ def test_model_loads_once_per_process_even_concurrently(tmp_path, monkeypatch):
         t.join()
     assert len(loads) == 1
     assert len({id(e._runtime) for e in engines}) == 1
+
+
+@pytest.mark.parametrize("spec", ["../Julia-1", "a/../../x", "../../etc"])
+def test_relative_paths_escaping_models_dir_are_rejected(spec, tmp_path, monkeypatch):
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    with pytest.raises(ValueError, match="escapes"):
+        JuliaEngine(spec)
+
+
+def test_relative_path_inside_models_dir_with_dotdot_is_allowed(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path / "home"))
+    path = JuliaEngine("a/../Julia-1").path
+    assert path == str(tmp_path / "home" / "models" / "a" / ".." / "Julia-1")
+
+
+def test_model_cache_keeps_two_most_recently_used(fake_julia, tmp_path, monkeypatch):
+    from judgetap.engines import julia as jmod
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setattr(jmod, "_models", {})
+    jmod.JuliaEngine("A")._get_runtime()
+    jmod.JuliaEngine("B")._get_runtime()
+    jmod.JuliaEngine("A")._get_runtime()  # A is now most recent
+    jmod.JuliaEngine("C")._get_runtime()  # evicts B
+    models = tmp_path / "models"
+    assert [k[0] for k in jmod._models] == [str(models / "A"), str(models / "C")]
+    assert len(fake_julia.loads) == 3
+    jmod.JuliaEngine("B")._get_runtime()  # reloads B, evicts A
+    assert len(fake_julia.loads) == 4
+    assert [k[0] for k in jmod._models] == [str(models / "C"), str(models / "B")]
