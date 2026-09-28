@@ -164,3 +164,16 @@ def test_stats_and_dashboard_show_shadow_total(tmp_path, capsys):
     assert "estimated, if pruning were on" in out
     s = load(tmp_path)["summary"]
     assert s["total"] == 1 and s["est_tokens_pruneable"] == 2000
+
+
+def test_error_at_the_end_of_a_huge_output_is_kept(tmp_path):
+    text = PROGRESS * 5000 + "\nTraceback (most recent call last):\n  boom"
+    prune.observe(_payload(text))
+    assert _records(tmp_path)[0]["label"] == "keep"
+
+
+DASHED = "\n".join(f"step {i}/100 [{'-' * 20}] eta 3s" for i in range(100))
+
+
+def test_dashed_bracket_bars_are_progress():
+    assert prune.label(DASHED, "Bash") == "drop"

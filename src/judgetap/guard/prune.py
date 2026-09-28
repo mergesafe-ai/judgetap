@@ -21,7 +21,7 @@ from typing import Any
 
 DEFAULT_THRESHOLD = 2000  # chars; smaller outputs aren't considered
 SUMMARY_CHARS = 500  # what a summary is assumed to keep
-SCAN_CHARS = 200_000  # only this much of a huge output is labelled
+SCAN_CHARS = 200_000  # a huge output is labelled on its head and tail only
 CHARS_PER_TOKEN = 4
 
 ERROR = re.compile(
@@ -33,7 +33,7 @@ ERROR = re.compile(
 # A progress line: a bar, or a percentage together with a bar or a counter
 # ("12/340"). A bare percentage (a coverage report, a test summary) isn't one.
 PROGRESS = re.compile(
-    r"[#=█▇▆▅▄▃▂▁]{10,}|\r"
+    r"[#=█▇▆▅▄▃▂▁]{10,}|\r|\[[#=>\-.\s]{10,}\]|[━─]{10,}"
     r"|\d{1,3}(\.\d+)?\s?%.*(\d+/\d+|[#=█]{3,})"
     r"|(\d+/\d+|[#=█]{3,}).*\d{1,3}(\.\d+)?\s?%"
 )
@@ -139,8 +139,11 @@ def observe(payload: dict[str, Any], failed: bool = False) -> None:
         text = output_text(payload)
         if len(text) <= threshold():
             return
-        # Label a bounded prefix: a huge output shouldn't balloon the hook.
-        verdict = label(text[:SCAN_CHARS], record["tool"], failed)
+        # Label a bounded sample, the head and the tail, so a huge output
+        # doesn't balloon the hook and an error at the end still counts.
+        half = SCAN_CHARS // 2
+        sample = text if len(text) <= SCAN_CHARS else text[:half] + "\n" + text[-half:]
+        verdict = label(sample, record["tool"], failed)
         record.update(
             label=verdict,
             output_chars=len(text),
