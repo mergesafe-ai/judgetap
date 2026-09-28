@@ -96,7 +96,7 @@ def test_codex_install_uses_shell_matcher(tmp_path):
     path = tmp_path / "hooks.json"
     install(path, "codex")
     entry = json.loads(path.read_text())["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "^(exec_command|shell|Bash)$"
+    assert entry["matcher"] == r"^\s*(exec_command|shell|Bash)\s*$"
     assert entry["hooks"][0]["command"] == f"{HOOK_COMMAND} --agent codex"
     assert uninstall(path, "codex") is True
 
@@ -166,3 +166,19 @@ def test_padded_codex_shell_name_is_still_guarded(tool):
     payload = {"tool_name": tool, "tool_input": {"cmd": "rm -rf /"}, "cwd": "/tmp"}
     out = hook.normalise(payload, "codex")
     assert out["tool_name"] == "Bash" and out["tool_input"]["command"] == "rm -rf /"
+
+
+@pytest.mark.parametrize("tool", ["exec_command", " exec_command", "shell ", " Bash "])
+def test_codex_matcher_accepts_what_normalise_guards(tool):
+    import re
+
+    from judgetap.guard.install import _entry
+
+    matcher = _entry("codex", "PreToolUse")["matcher"]
+    assert re.search(matcher, tool)
+    assert (
+        hook.normalise({"tool_name": tool, "tool_input": {"cmd": "ls"}}, "codex")[
+            "tool_name"
+        ]
+        == "Bash"
+    )

@@ -110,8 +110,9 @@ def _entry(agent: str, event: str) -> dict:
         if event in ("PostToolUse", "PostToolUseFailure")
         else hook_command(agent)
     )
-    # Codex's PreToolUse fires for shell only today; the matcher says so.
-    matcher = "^(exec_command|shell|Bash)$" if agent == "codex" else MATCHER
+    # Codex's PreToolUse fires for shell only today; the matcher says so. It
+    # tolerates padding because normalise() strips the name before matching.
+    matcher = r"^\s*(exec_command|shell|Bash)\s*$" if agent == "codex" else MATCHER
     return {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
 
 
