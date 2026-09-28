@@ -159,3 +159,10 @@ def test_codex_unreadable_input_asks(raw):
     out, err = io.StringIO(), io.StringIO()
     code = hook.run(io.StringIO(raw), out, agent="codex", stderr=err)
     assert code == 2 and "Ask the user" in err.getvalue()
+
+
+@pytest.mark.parametrize("tool", [" exec_command", "shell ", " Bash "])
+def test_padded_codex_shell_name_is_still_guarded(tool):
+    payload = {"tool_name": tool, "tool_input": {"cmd": "rm -rf /"}, "cwd": "/tmp"}
+    out = hook.normalise(payload, "codex")
+    assert out["tool_name"] == "Bash" and out["tool_input"]["command"] == "rm -rf /"

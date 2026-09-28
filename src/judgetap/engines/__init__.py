@@ -50,7 +50,7 @@ def load(spec: str | None = None) -> Engine:
             )
         if flags not in ("", "logprobs"):
             raise JudgetapError(f"unknown llm option {flags!r}; known: logprobs")
-        return LLMEngine(model=model, logprobs=flags == "logprobs")
+        return LLMEngine(model=model.strip(), logprobs=flags == "logprobs")
     if name == "laya":
         from judgetap.engines.laya import DEFAULT_MODEL, LayaEngine
 

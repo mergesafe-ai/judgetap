@@ -236,7 +236,8 @@ def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
             "session_id": payload.get("conversation_id"),
             "transcript_path": payload.get("transcript_path"),
         }
-    if agent == "codex" and payload.get("tool_name") in CODEX_SHELL_TOOLS:
+    tool = payload.get("tool_name")
+    if agent == "codex" and isinstance(tool, str) and tool.strip() in CODEX_SHELL_TOOLS:
         # Codex's shell tool is exec_command with tool_input.cmd (str or argv).
         inp = payload.get("tool_input")
         inp = inp if isinstance(inp, dict) else {}
