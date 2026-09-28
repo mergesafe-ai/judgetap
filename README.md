@@ -67,6 +67,8 @@ On a CPU-only Linux box, install the CPU PyTorch wheel before `judgetap[laya]` (
 
 **Loop detection (Claude Code).** `PostToolUse` and `PostToolUseFailure` hooks (`judgetap guard post`, added by `guard install --for claude-code`) notices when the same command or edit fails the same way three times within eight actions and adds a note asking the agent to re-plan. It never blocks, uses no model, and stores only a redacted action and an error hash per session. Cursor and Codex: not yet.
 
+**Output pruning, shadow mode (Claude Code).** The same `PostToolUse` hook labels large tool outputs (over 2000 characters, `prune_threshold` in `~/.judgetap/guard.toml`) keep, summarize or drop by rules and logs the tokens that would have been saved, estimated as characters / 4. It is observe-only: outputs are never changed. `judgetap guard stats` and the dashboard show the total as "est. tokens pruneable (shadow)". Real pruning is gated on a labelled set (#89).
+
 - **Agents:** Claude Code (shell, writes and edits), Cursor and Codex (shell only; their hooks don't expose writes and edits).
 - **Engine:** `judgetap guard install` uses one you already have (`$JUDGETAP_ENGINE`, a `TYPESAFE_API_KEY`, or a local AgentJev) and saves it in `~/.judgetap/guard.toml`, because agents often run hooks without your shell's environment.
 - **Keys:** read from the environment, then the OS keychain (`pip install "judgetap[keychain]"`, then `judgetap keys set TYPESAFE_API_KEY`). Keys are never written to config or logs.

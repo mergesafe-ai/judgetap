@@ -61,7 +61,8 @@ const fmt = (n, d = 0) => n == null ? "–" : Number(n).toFixed(d);
 function tiles(s) {
   const o = s.outcomes || {};
   const items = [["Guarded calls", s.total], ["Holds", o.hold || 0], ["Asks", o.ask || 0],
-    ["Holds / 1,000", fmt(s.holds_per_1000, 1)], ["False alarms", s.false_alarms], ["Library decisions", s.library || 0], ["Engine cost", "$" + fmt(s.cost_usd, 4)]];
+    ["Holds / 1,000", fmt(s.holds_per_1000, 1)], ["False alarms", s.false_alarms], ["Library decisions", s.library || 0], ["Engine cost", "$" + fmt(s.cost_usd, 4)],
+    ["Est. tokens pruneable (shadow)", (s.est_tokens_pruneable || 0).toLocaleString()]];
   $("tiles").innerHTML = items.map(([k, v]) => `<div class="tile"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
 }
 function days(perDay) {

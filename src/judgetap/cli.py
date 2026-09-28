@@ -152,6 +152,7 @@ def _guard_stats(args) -> int:
     latency_ms: Counter[int] = Counter()  # 1 ms histogram: bounded memory
     total = errors = 0
     cost = 0.0
+    pruneable = pruned = 0
     with path.open() as fh:  # streamed: the log grows without bound
         for line in fh:
             if not line.strip():
@@ -160,6 +161,12 @@ def _guard_stats(args) -> int:
                 r = json.loads(line)
             except ValueError:
                 continue  # a line cut off by a concurrent write
+            if r.get("layer") == "prune":
+                saved = r.get("est_tokens_saved")
+                if isinstance(saved, int) and not isinstance(saved, bool) and saved > 0:
+                    pruneable += saved
+                    pruned += 1
+                continue  # shadow notes: nothing was pruned
             if r.get("source") == "library" or r.get("layer") in ("loop", "stop"):
                 continue  # library decisions and loop notes share the log but aren't guarded calls
             total += 1
@@ -178,6 +185,10 @@ def _guard_stats(args) -> int:
         p50, p95 = _rank(latency_ms, 0.5), _rank(latency_ms, 0.95)
         print(f"judge latency p50 {p50} ms, p95 {p95} ms")
     print(f"engine cost: ${cost:.4f}")
+    print(
+        f"est. tokens pruneable (shadow): {pruneable:,} across {pruned} outputs"
+        " (chars/4, estimated, if pruning were on; nothing was pruned)"
+    )
     if errors:
         print(f"calls with errors (engine or config; rules still ran): {errors}")
     return 0

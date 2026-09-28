@@ -285,9 +285,17 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
 def run(stdin=sys.stdin, stdout=sys.stdout) -> int:
     """Hook entry point. Always exits 0 and stays silent on any error."""
     try:
-        out = handle(json.load(stdin))
+        payload = json.load(stdin)
+        out = handle(payload)
     except Exception:  # noqa: BLE001 -- loop detection must never disturb the agent
         return 0
+    try:
+        if payload.get("hook_event_name") in ("PostToolUse", None):
+            from judgetap.guard.prune import observe
+
+            observe(payload, failed=failure(payload) is not None)
+    except Exception:  # noqa: BLE001, S110 -- shadow pruning is observe-only
+        pass
     if out:
         json.dump(out, stdout)
     return 0

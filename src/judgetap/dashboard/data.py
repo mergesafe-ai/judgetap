@@ -85,6 +85,7 @@ def _load(home: Path, today: date) -> dict[str, Any]:
     calls: Counter = Counter()  # true totals; the latency deques are capped
     recent: deque = deque(maxlen=MAX_RECENT)
     cost, total, false_holds, library, loops, stops = 0.0, 0, 0, 0, 0, 0
+    pruneable = 0
     for n, raw in _iter_jsonl(home / "guard.jsonl"):
         try:
             r = _clean(raw)
@@ -98,6 +99,11 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         _count_calls(r, calls, by_engine)
         if r.get("layer") == "stop":
             stops += 1  # a task-done check, not a guarded call
+            continue
+        if r.get("layer") == "prune":
+            saved = raw.get("est_tokens_saved")
+            if isinstance(saved, int) and not isinstance(saved, bool) and saved > 0:
+                pruneable += saved  # shadow estimate (chars/4); nothing pruned
             continue
         if r.get("layer") == "loop":
             loops += 1  # a note after repeated failures, not a guarded call
@@ -119,6 +125,7 @@ def _load(home: Path, today: date) -> dict[str, Any]:
         "library": library,
         "loop_notes": loops,
         "stop_checks": stops,
+        "est_tokens_pruneable": pruneable,
         "outcomes": dict(outcomes),
         "holds_per_1000": round(1000 * outcomes["hold"] / total, 1) if total else None,
         "false_alarms": false_holds,
