@@ -6,16 +6,18 @@ the request is built with the Jev adapter's helpers. Its runtime ships in the
 model repo rather than on PyPI:
 
     python -c "from huggingface_hub import snapshot_download; \\
-        snapshot_download('SupersonicLabs/Julia-1', local_dir='Julia-1')"
-    pip install -e ./Julia-1
+        import os; snapshot_download('SupersonicLabs/Julia-1', \\
+        local_dir=os.path.expanduser('~/.judgetap/models/Julia-1'))"
+    pip install -e ~/.judgetap/models/Julia-1
 
 Spec `julia` loads the checkpoint at $JUDGETAP_JULIA_PATH (default
 `~/.judgetap/models/Julia-1`); `julia:<path>` names it. A relative path is
-taken from ~/.judgetap/models, never the working directory: the guard runs
-inside untrusted repos, which must not be able to supply the model that
-judges them. $JUDGETAP_JULIA_DEVICE picks the device (default `cpu`).
+taken from ~/.judgetap/models, never the working directory, and may not
+escape it (`../x` is rejected): the guard runs inside untrusted repos, which
+must not be able to supply the model that judges them. $JUDGETAP_JULIA_DEVICE picks the device (default `cpu`).
 
-Loaded models are cached per process (path, device), so a long-running
+Loaded models are cached per process (path, device), at most
+MAX_CACHED_MODELS of them (least recently used evicted), so a long-running
 program loads each once. The guard hook is a new process per action, so an
 in-process model still loads on every guarded action there: for the guard,
 prefer a server engine (AgentJev, or a TypeSafe-compatible URL).
@@ -36,7 +38,8 @@ from judgetap.errors import JudgetapError
 from judgetap.types import NO, YES, Question
 
 DEFAULT_PATH = "Julia-1"
-_models: dict[tuple[str, str], Any] = {}
+MAX_CACHED_MODELS = 2
+_models: dict[tuple[str, str], Any] = {}  # insertion order = LRU order
 _models_lock = threading.Lock()
 
 
@@ -47,9 +50,21 @@ def _models_dir() -> Path:
 
 
 def resolve_path(path: str) -> str:
-    """Absolute paths as given; anything else under ~/.judgetap/models."""
+    """Absolute paths as given; anything else under ~/.judgetap/models.
+
+    A relative path that resolves outside the models directory (``../x``,
+    or a symlink out of it) is rejected.
+    """
     p = Path(path).expanduser()
-    return str(p if p.is_absolute() else _models_dir() / p)
+    if p.is_absolute():
+        return str(p)
+    base = _models_dir()
+    if not (base / p).resolve().is_relative_to(base.resolve()):
+        raise ValueError(
+            f"julia model path {path!r} escapes {base}; "
+            "use an absolute path for a model outside it"
+        )
+    return str(base / p)
 
 
 # Julia's native limits: 2-20 options per question.
@@ -90,7 +105,9 @@ class JuliaEngine:
         key = (self.path, self.device)
         # One load per process and model, even with concurrent first calls.
         with _models_lock:
-            if key not in _models:
+            if key in _models:
+                _models[key] = _models.pop(key)  # mark most recently used
+            else:
                 try:
                     from julia import load_model
                 except ImportError as err:
@@ -106,6 +123,8 @@ class JuliaEngine:
                     max_length=8192,
                     head_length=512,
                 )
+                while len(_models) > MAX_CACHED_MODELS:
+                    del _models[next(iter(_models))]
             self._runtime = _models[key]
         return self._runtime
 
