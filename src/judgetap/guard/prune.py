@@ -30,16 +30,20 @@ ERROR = re.compile(
     r"|\bE\d{3,}\b|\bERR!",
     re.IGNORECASE,
 )
-# A progress line is a bar (10+ bar characters, any style, hyphens included)
-# on a line that also carries a number, or a percentage together with a
-# counter ("12/340"). A bare separator ("-----", no number) and a bare
-# percentage (a coverage report, a test summary) are not progress.
-BAR = re.compile(r"[#=>\-█▇▆▅▄▃▂▁━─]{10,}")
-COUNTED = re.compile(r"\d{1,3}(\.\d+)?\s?%.*\d+/\d+|\d+/\d+.*\d{1,3}(\.\d+)?\s?%")
+# A progress line is a bar on a line that also carries a number, or a
+# percentage together with a counter ("12/340"). A bar is any run of 8+
+# symbol characters, whatever it is drawn with: solid, segmented
+# ("[#####.....]", "▰▰▱▱"), hyphens or box drawing. A bare separator
+# ("-----", no number) and a bare percentage (a coverage report) are not
+# progress. Every pattern here is a single character-class run, so matching
+# is linear in the line length.
+BAR = re.compile(r"[^\w\s]{8,}")
+PERCENT = re.compile(r"\d\s?%")
+COUNTER = re.compile(r"\d/\d")
 
 
 def _is_progress(line: str) -> bool:
-    if "\r" in line or COUNTED.search(line):
+    if "\r" in line or (PERCENT.search(line) and COUNTER.search(line)):
         return True
     return bool(BAR.search(line)) and any(c.isdigit() for c in BAR.sub("", line))
 

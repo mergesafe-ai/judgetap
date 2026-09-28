@@ -192,3 +192,21 @@ SEPARATORS = "\n".join(("-" * 40) if i % 2 else f"row {i} value x" for i in rang
 def test_bare_hyphen_bars_are_progress_but_separators_are_not():
     assert prune.label(BARE, "Bash") == "drop"
     assert prune.label(SEPARATORS, "Bash") != "drop"
+
+
+@pytest.mark.parametrize(
+    "bar",
+    ["[#######.....]", "▰▰▰▰▱▱▱▱▱▱", "|██████░░░░|", "(=====-----)", "━━━━━╸━━━━━"],
+)
+def test_any_bar_style_on_a_numbered_line_is_progress(bar):
+    text = "\n".join(f"{i}% {bar}" for i in range(100))
+    assert prune.label(text, "Bash") == "drop"
+
+
+def test_progress_matching_is_linear_on_a_long_line():
+    import time
+
+    line = "9%" + " x" * 200_000 + "1/"
+    start = time.perf_counter()
+    prune._is_progress(line)
+    assert time.perf_counter() - start < 0.5
