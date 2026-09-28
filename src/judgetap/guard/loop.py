@@ -296,6 +296,7 @@ def run(stdin=sys.stdin, stdout=sys.stdout) -> int:
     try:
         if isinstance(payload, dict) and payload.get("hook_event_name") in (
             "PostToolUse",
+            "PostToolUseFailure",  # always keep, but counted as considered (#114)
             None,
         ):
             from judgetap.guard.prune import observe

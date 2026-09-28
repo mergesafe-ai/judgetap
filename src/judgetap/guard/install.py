@@ -11,6 +11,7 @@ from judgetap.errors import JudgetapError
 
 HOOK_COMMAND = "judgetap guard hook"
 POST_COMMAND = "judgetap guard post"  # loop detection, Claude Code only
+PRUNE_COMMAND = "judgetap guard prune --agent"  # shadow pruning, Cursor/Codex
 STOP_COMMAND = "judgetap guard stop"  # opt-in task-done check, Claude Code only
 MATCHER = "Bash|Write|Edit|MultiEdit"
 
@@ -53,7 +54,12 @@ OLD_HOOK_COMMAND = "snapjudge guard hook"  # written by installs before #38
 def _ours(command: str | None) -> bool:
     """Exactly a command this installer writes (now or under the old name);
     anything edited is the user's."""
-    return command in (POST_COMMAND, STOP_COMMAND) or command in {
+    return command in (
+        POST_COMMAND,
+        STOP_COMMAND,
+        f"{PRUNE_COMMAND} cursor",
+        f"{PRUNE_COMMAND} codex",
+    ) or command in {
         base + suffix
         for base in (HOOK_COMMAND, OLD_HOOK_COMMAND)
         for suffix in ("", " --agent cursor", " --agent codex")
@@ -97,10 +103,21 @@ def _events(agent: str, with_stop: bool = False) -> list[str]:
             "PostToolUseFailure",
             *(["Stop"] if with_stop else []),
         ]
-    return [_event(agent)]
+    # Shadow pruning (#112): Cursor's afterShellExecution carries the shell
+    # output; Codex's PostToolUse carries every supported tool's output.
+    return [_event(agent), _post_event(agent)]
+
+
+def _post_event(agent: str) -> str:
+    return "afterShellExecution" if agent == "cursor" else "PostToolUse"
 
 
 def _entry(agent: str, event: str) -> dict:
+    if agent != "claude-code" and event == _post_event(agent):
+        command = f"{PRUNE_COMMAND} {agent}"
+        if agent == "cursor":
+            return {"command": command}
+        return {"hooks": [{"type": "command", "command": command}]}  # every tool
     if agent == "cursor":
         return {"command": hook_command(agent)}
     if event == "Stop":  # Stop takes no matcher

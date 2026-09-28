@@ -182,3 +182,44 @@ def test_codex_matcher_accepts_what_normalise_guards(tool):
         ]
         == "Bash"
     )
+
+
+@pytest.mark.parametrize(
+    ("agent", "event", "entry"),
+    [
+        (
+            "cursor",
+            "afterShellExecution",
+            {"command": "judgetap guard prune --agent cursor"},
+        ),
+        (
+            "codex",
+            "PostToolUse",
+            {
+                "hooks": [
+                    {"type": "command", "command": "judgetap guard prune --agent codex"}
+                ]
+            },
+        ),
+    ],
+)
+def test_prune_hook_installs_and_uninstalls(tmp_path, agent, event, entry):
+    path = tmp_path / "hooks.json"
+    path.write_text(json.dumps({"hooks": {event: [{"command": "./mine.sh"}]}}))
+    assert install(path, agent) is True and install(path, agent) is False
+    assert json.loads(path.read_text())["hooks"][event] == [
+        {"command": "./mine.sh"},
+        entry,
+    ]
+    assert uninstall(path, agent) is True
+    assert json.loads(path.read_text())["hooks"] == {event: [{"command": "./mine.sh"}]}
+
+
+def test_cli_prune_command_exits_zero(tmp_path, monkeypatch):
+    import io
+
+    from judgetap.cli import main
+
+    monkeypatch.setenv("JUDGETAP_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+    assert main(["guard", "prune", "--agent", "cursor"]) == 0

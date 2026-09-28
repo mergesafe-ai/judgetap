@@ -1,6 +1,7 @@
 """Shadow-mode output pruning (v0.5, #27/#29): observe only.
 
-On Claude Code PostToolUse, a large tool output is labelled keep, summarize
+On Claude Code PostToolUse and PostToolUseFailure, Cursor afterShellExecution
+and Codex PostToolUse (#112, #114), a large tool output is labelled keep, summarize
 or drop by a few rules (no model), and the guard log records the tokens a
 summarize or drop *would* have saved. The output itself is never modified,
 suppressed or replaced, and none of it is logged: only its size and label. Real
@@ -169,3 +170,35 @@ def observe(payload: dict[str, Any], failed: bool = False) -> None:
         _log(record)
     except Exception:  # noqa: BLE001, S110
         pass
+
+
+def normalise(payload: dict[str, Any], agent: str) -> dict[str, Any]:
+    """Map an agent's after-execution hook input onto the PostToolUse fields
+    observe() reads: session_id, tool_name, tool_response."""
+    if agent == "cursor":  # afterShellExecution: {command, output, duration, ...}
+        return {
+            "session_id": payload.get("conversation_id"),
+            "tool_name": "Bash",
+            "tool_response": payload.get("output"),
+        }
+    # Codex PostToolUse is already Claude Code's shape; its shell tool may be
+    # reported as exec_command, and a non-zero exit arrives here too (the
+    # error rules label it keep).
+    tool = payload.get("tool_name")
+    if isinstance(tool, str) and tool.strip() in ("exec_command", "shell"):
+        return {**payload, "tool_name": "Bash"}
+    return payload
+
+
+def run(agent: str, stdin=None) -> int:
+    """`judgetap guard prune --agent cursor|codex`: observe only. Always exits
+    0 and writes nothing to stdout, so the agent sees no decision."""
+    import sys
+
+    try:
+        payload = json.load(stdin or sys.stdin)
+        if isinstance(payload, dict):
+            observe(normalise(payload, agent))
+    except Exception:  # noqa: BLE001, S110 -- shadow pruning never disturbs the agent
+        pass
+    return 0

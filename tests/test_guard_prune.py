@@ -128,11 +128,12 @@ def test_errors_are_swallowed_and_noted(tmp_path, monkeypatch):
     assert r["error"] == "RuntimeError" and r["est_tokens_saved"] == 0
 
 
-def test_failure_events_are_not_pruned(tmp_path):
+def test_failure_events_are_considered_but_kept(tmp_path):
     p = _payload(PROGRESS)
     p["hook_event_name"] = "PostToolUseFailure"
     loop.run(io.StringIO(json.dumps(p)), io.StringIO())
-    assert _records(tmp_path) == []
+    (r,) = [x for x in _records(tmp_path) if x["layer"] == "prune"]
+    assert r["label"] == "keep" and r["est_tokens_saved"] == 0
 
 
 def test_stats_and_dashboard_show_shadow_total(tmp_path, capsys):
@@ -219,3 +220,47 @@ def test_progress_matching_is_linear_on_a_long_line():
     start = time.perf_counter()
     prune._is_progress(line)
     assert time.perf_counter() - start < 0.5
+
+
+def test_cursor_after_shell_is_observed_without_output(tmp_path, capsys):
+    secret = "AKIAABCDEFGHIJKLMNOP "
+    payload = {
+        "hook_event_name": "afterShellExecution",
+        "conversation_id": "c1",
+        "command": "pip install x",
+        "output": secret + PROGRESS,
+        "duration": 12,
+    }
+    assert prune.run("cursor", io.StringIO(json.dumps(payload))) == 0
+    assert capsys.readouterr().out == ""
+    (r,) = _records(tmp_path)
+    assert r["session"] == "c1" and r["tool"] == "Bash" and r["label"] == "drop"
+    assert r["output_chars"] == len(secret + PROGRESS)
+    assert "AKIA" not in json.dumps(r)
+
+
+def test_codex_post_tool_use_is_observed(tmp_path):
+    p = _payload(PROGRESS, tool="exec_command")
+    assert prune.run("codex", io.StringIO(json.dumps(p))) == 0
+    (r,) = _records(tmp_path)
+    assert r["tool"] == "Bash" and r["label"] == "drop"
+
+
+def test_codex_string_response(tmp_path):
+    p = {"session_id": "s", "tool_name": "Bash", "tool_response": PROGRESS}
+    prune.run("codex", io.StringIO(json.dumps(p)))
+    assert _records(tmp_path)[0]["label"] == "drop"
+
+
+@pytest.mark.parametrize("stdin", ["not json", "[1, 2]", "null"])
+def test_prune_run_swallows_bad_input(tmp_path, stdin):
+    assert prune.run("cursor", io.StringIO(stdin)) == 0
+    assert _records(tmp_path) == []
+
+
+def test_prune_run_swallows_observe_errors(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError
+
+    monkeypatch.setattr(prune, "observe", boom)
+    assert prune.run("codex", io.StringIO("{}")) == 0
