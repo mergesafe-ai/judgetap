@@ -100,3 +100,70 @@ def test_cli_needs_exactly_one_source(tmp_path):
         main(["--engines", "x"])
     with pytest.raises(SystemExit):
         main([str(tmp_path / "c.jsonl"), "--suite", "ag_news", "--engines", "x"])
+
+
+def _page(features, rows, total):
+    return {"features": features, "rows": rows, "num_rows_total": total}
+
+
+LABEL_ONLY = [{"name": "label", "type": {"names": NAMES, "_type": "ClassLabel"}}]
+
+
+def test_label_names_live_type_key_and_feature_key():
+    # The live rows API shape, captured 2026-09-27, uses "type".
+    assert suites._label_names(LABEL_ONLY, "label") == NAMES
+    alt = [{"name": "label", "feature": {"names": NAMES}}]
+    assert suites._label_names(alt, "label") == NAMES
+    with pytest.raises(sj.JudgetapError, match="class-label"):
+        suites._label_names([{"name": "label", "type": {"dtype": "int64"}}], "label")
+
+
+def test_empty_intermediate_page_raises_and_caches_nothing(cache, monkeypatch):
+    real = fake_api(250, [])
+
+    def get(url):
+        page = real(url)
+        if "offset=100" in url:
+            page["rows"] = []
+        return page
+
+    monkeypatch.setattr(suites, "_get_json", get)
+    with pytest.raises(sj.JudgetapError, match="empty page at offset 100 of 250"):
+        suites.suite_path("ag_news")
+    assert list(cache.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"text": "x"},
+        {"label": 1},
+        {"text": "x", "label": 9},
+        {"text": "x", "label": -1},
+        {"text": "x", "label": "nan"},
+        {"text": None, "label": 1},
+    ],
+)
+def test_malformed_row_raises_judgetap_error(cache, monkeypatch, row):
+    page = _page(LABEL_ONLY, [{"row_idx": 0, "row": row}], 1)
+    monkeypatch.setattr(suites, "_get_json", lambda url: page)
+    with pytest.raises(sj.JudgetapError, match="malformed row 0"):
+        suites.suite_path("ag_news")
+    assert list(cache.iterdir()) == []
+
+
+def test_cli_empty_suite_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--suite", "", "--engines", "x"])
+    assert exc.value.code == 2
+    assert "needs a suite name" in capsys.readouterr().err
+
+
+def test_cli_suite_failure_is_a_clean_error(cache, monkeypatch, capsys):
+    def boom(url):
+        raise OSError("offline")
+
+    monkeypatch.setattr(suites, "_get_json", boom)
+    assert main(["--suite", "ag_news", "--engines", "x"]) == 1
+    err = capsys.readouterr().err
+    assert "offline" in err and "Traceback" not in err

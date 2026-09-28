@@ -90,10 +90,34 @@ def _page_url(suite: Suite, offset: int) -> str:
 def _label_names(features: list[dict[str, Any]], field: str) -> list[str]:
     for feature in features:
         if feature.get("name") == field:
-            names = feature.get("type", {}).get("names")
-            if isinstance(names, list) and names:
-                return [str(n) for n in names]
+            # The live rows API puts the ClassLabel under "type" (checked
+            # 2026-09-27); "feature" is accepted too, the key older docs name.
+            for key in ("type", "feature"):
+                spec = feature.get(key)
+                names = spec.get("names") if isinstance(spec, dict) else None
+                if isinstance(names, list) and names:
+                    return [str(n) for n in names]
     raise JudgetapError(f"no class-label names for {field!r} in the dataset")
+
+
+def _to_case(suite: Suite, names: list[str], item: Any, index: int) -> dict[str, Any]:
+    try:
+        row = item["row"]
+        context = row[suite.text_field]
+        label = int(row[suite.label_field])
+        if not isinstance(context, str) or not 0 <= label < len(names):
+            raise ValueError(f"label {label} or text is out of range")
+    except (KeyError, TypeError, ValueError) as err:
+        raise JudgetapError(
+            f"suite {suite.name!r}: malformed row {index}: {err!r}"
+        ) from err
+    return {
+        "kind": "choice",
+        "question": suite.question,
+        "options": names,
+        "context": context,
+        "label": names[label],
+    }
 
 
 def download(suite: Suite) -> list[dict[str, Any]]:
@@ -111,18 +135,14 @@ def download(suite: Suite) -> list[dict[str, Any]]:
         total = int(page.get("num_rows_total", 0))
         rows = page.get("rows", [])
         if not rows:
+            if offset < total:
+                raise JudgetapError(
+                    f"suite {suite.name!r}: empty page at offset {offset} "
+                    f"of {total} rows; refusing to cache a partial suite"
+                )
             break
         for item in rows:
-            row = item["row"]
-            cases.append(
-                {
-                    "kind": "choice",
-                    "question": suite.question,
-                    "options": names,
-                    "context": row[suite.text_field],
-                    "label": names[int(row[suite.label_field])],
-                }
-            )
+            cases.append(_to_case(suite, names, item, offset + len(cases)))
         offset += len(rows)
     if not cases:
         raise JudgetapError(f"suite {suite.name!r} downloaded no rows")
