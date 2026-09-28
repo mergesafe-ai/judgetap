@@ -427,3 +427,31 @@ def test_sync_stops_submitting_after_a_failure(fake, monkeypatch):
             engine=LLMEngine("openai/x", logprobs=True),
         )
     assert len(lit.calls) <= 2
+
+
+def test_a_finished_request_frees_its_slot_while_another_is_slow(fake, monkeypatch):
+    import threading
+
+    import judgetap.engines.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "MAX_CONCURRENT", 2)
+    lock, seen, rest_done = threading.Lock(), [], threading.Event()
+
+    def handler(m, kw):
+        with lock:
+            n = len(seen)
+            seen.append(n)
+        if n == 0:
+            # The slow question finishes only once the others got through,
+            # which they can only do if each finished call frees a slot.
+            assert rest_done.wait(5)
+        elif n == 5:
+            rest_done.set()
+        return lp_response([("A", 0.9), ("B", 0.1)])
+
+    fake(handler)
+    ds = jt.batch(
+        [jt.Question.yesno(str(i)) for i in range(6)],
+        engine=LLMEngine("openai/x", logprobs=True),
+    )
+    assert len(ds) == 6 and rest_done.is_set()

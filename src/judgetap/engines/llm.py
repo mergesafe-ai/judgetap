@@ -23,7 +23,13 @@ import math
 import string
 import time
 from collections.abc import Sequence
-from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    FIRST_EXCEPTION,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from typing import Any
 
 from judgetap.engine import Call, Context, RawAnswer, plain_context
@@ -242,7 +248,8 @@ class LLMEngine:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for q in questions:
                 if len(pending) >= workers:
-                    done, pending = wait(pending, return_when=FIRST_EXCEPTION)
+                    # Any completion frees a slot; a failure is among `done`.
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     failed = next((f for f in done if f.exception()), None)
                     if failed is not None:
                         break

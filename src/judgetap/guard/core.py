@@ -193,6 +193,17 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         if fallback:
             outcome, name, reason = fallback
             return Verdict(outcome, "rules", reason, rule=name, error=error, calls=made)
+        if action.command is None:
+            # A file write has no rules-only check to fall back on: the path and
+            # content rules already passed, and only the judge could weigh the
+            # rest. It failed, so ask rather than vouch for the write.
+            return Verdict(
+                "ask",
+                "judge",
+                "judgement failed on a file write",
+                error=error,
+                calls=made,
+            )
         return Verdict(
             "allow", "judge", "judgement failed; rules only", error=error, calls=made
         )
