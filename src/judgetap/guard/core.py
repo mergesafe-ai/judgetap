@@ -221,6 +221,10 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         fallback = rules_only_check(action.command)
         if fallback:
             outcome, name, reason = fallback
+            reason = (
+                "the judge's allow isn't trusted with repo rules in its prompt: "
+                f"{reason}"
+            )
             return Verdict(outcome, "rules", reason, rule=name, **common)
     return Verdict("allow", "judge", "", **common)
 

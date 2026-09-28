@@ -160,13 +160,19 @@ def test_model_loads_once_per_process_even_concurrently(tmp_path, monkeypatch):
     fake.load_model = load_model
     monkeypatch.setitem(sys.modules, "julia", fake)
     engines = [jmod.JuliaEngine() for _ in range(5)]
-    threads = [threading.Thread(target=e._get_runtime) for e in engines]
+    got = []
+    threads = [
+        threading.Thread(target=lambda e=e: got.append(e._get_runtime()))
+        for e in engines
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert len(loads) == 1
-    assert len({id(e._runtime) for e in engines}) == 1
+    assert len(got) == len(engines)
+    (cached,) = list(jmod._models.values())
+    assert {id(m) for m in got} == {id(cached)}
 
 
 @pytest.mark.parametrize("spec", ["../Julia-1", "a/../../x", "../../etc"])

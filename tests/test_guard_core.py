@@ -176,6 +176,7 @@ def test_repo_rules_cannot_talk_the_judge_past_a_rules_only_ask():
         judge(),
     )
     assert (v.outcome, v.layer, v.rule) == ("ask", "rules", "rules-only")
+    assert v.reason.startswith("the judge's allow isn't trusted with repo rules")
     assert v.engine == "fake"
 
 
