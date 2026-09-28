@@ -214,6 +214,14 @@ def _judge(action: Action, engine: Engine) -> Verdict:
         return Verdict(
             "ask", "judge", "judged off-task for the current request", **common
         )
+    # Repo-controlled text (AGENTS.md, CLAUDE.md, guard.md) reached the prompt,
+    # so it may have argued for "allow". A repo may only tighten the guard: the
+    # judge can hold or ask on its behalf, but can't lift a rules-only ask.
+    if action.project_rules and action.command is not None:
+        fallback = rules_only_check(action.command)
+        if fallback:
+            outcome, name, reason = fallback
+            return Verdict(outcome, "rules", reason, rule=name, **common)
     return Verdict("allow", "judge", "", **common)
 
 
