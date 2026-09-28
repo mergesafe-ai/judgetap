@@ -1,4 +1,9 @@
-"""Loop detection: a Claude Code PostToolUse hook, no model involved.
+"""Loop detection: a post-execution hook, no model involved.
+
+Claude Code (PostToolUse/PostToolUseFailure), Cursor (postToolUse/
+postToolUseFailure) and Codex (PostToolUse) are supported; `normalise_post`
+maps the latter two onto Claude Code's shape and `_respond` answers in each
+agent's format.
 
 After each tool call the hook records a normalized action (the command or
 file path) and a short hash of its error, in a small per-session ring
@@ -12,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import time
 import uuid
@@ -282,7 +288,81 @@ def handle(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def run(stdin=sys.stdin, stdout=sys.stdout) -> int:
+PATCH_FILE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$", re.MULTILINE)
+
+
+CODEX_EXIT = re.compile(
+    r"^(?:exit code:|process exited with code)\s*(-?\d+)", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _cursor_output(raw: Any) -> Any:
+    """Cursor sends tool_output JSON-stringified ({"exitCode": 0, ...})."""
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return raw
+        return parsed if isinstance(parsed, dict) else raw
+    return raw
+
+
+def normalise_post(payload: Any, agent: str) -> Any:
+    """Map Cursor's and Codex's post-execution input onto Claude Code's
+    PostToolUse/PostToolUseFailure shape. Unknown tools pass through and
+    normalize() ignores them."""
+    if not isinstance(payload, dict) or agent == "claude-code":
+        return payload
+    tool = payload.get("tool_name")
+    inp = payload.get("tool_input")
+    inp = inp if isinstance(inp, dict) else {}
+    if agent == "cursor":
+        event = payload.get("hook_event_name")
+        out: dict[str, Any] = {
+            "session_id": payload.get("conversation_id"),
+            "cwd": payload.get("cwd"),
+            "is_interrupt": bool(payload.get("is_interrupt"))
+            # A denial is the guard (or user) saying no, not the tool failing.
+            or payload.get("failure_type") == "permission_denied",
+        }
+        if event == "postToolUseFailure":
+            out["hook_event_name"] = "PostToolUseFailure"
+            out["error"] = str(payload.get("error_message") or "failed")
+        else:
+            out["hook_event_name"] = "PostToolUse"
+            out["tool_response"] = _cursor_output(payload.get("tool_output"))
+        if tool in ("Shell", "Bash", "run_terminal_cmd"):
+            out.update(tool_name="Bash", tool_input={"command": inp.get("command")})
+        elif tool in ("Write", "Edit", "MultiEdit", "StrReplace", "edit_file"):
+            path = inp.get("file_path", inp.get("path", inp.get("target_file")))
+            out.update(tool_name="Edit", tool_input={"file_path": path})
+        return out
+    if agent == "codex":
+        name = tool.strip() if isinstance(tool, str) else tool
+        out = {**payload, "hook_event_name": "PostToolUse"}
+        if name in ("Bash", "exec_command", "shell"):
+            cmd = inp.get("command", inp.get("cmd"))
+            if isinstance(cmd, list):
+                cmd = shlex.join(str(c) for c in cmd)
+            out.update(tool_name="Bash", tool_input={"command": cmd})
+            resp = payload.get("tool_response")
+            m = CODEX_EXIT.search(resp) if isinstance(resp, str) else None
+            if m:  # model-facing text: "Exit code: 1\nWall time: ...\nOutput: ..."
+                out["tool_response"] = {"exit_code": int(m.group(1)), "stderr": resp}
+        elif name in ("apply_patch", "Edit", "Write"):
+            files = PATCH_FILE.findall(str(inp.get("command") or ""))
+            out.update(tool_name="Edit", tool_input={"file_path": ",".join(files)})
+        return out
+    return payload
+
+
+def _respond(out: dict[str, Any] | None, agent: str) -> dict[str, Any] | None:
+    if not out or agent != "cursor":
+        return out  # Codex reads Claude Code's hookSpecificOutput.additionalContext
+    return {"additional_context": out["hookSpecificOutput"]["additionalContext"]}
+
+
+def run(stdin=sys.stdin, stdout=sys.stdout, agent: str = "claude-code") -> int:
     """Hook entry point. Always exits 0 and stays silent on any error."""
     try:
         payload = json.load(stdin)
@@ -290,7 +370,8 @@ def run(stdin=sys.stdin, stdout=sys.stdout) -> int:
         return 0
     out = None
     try:
-        out = handle(payload)
+        payload = normalise_post(payload, agent)
+        out = _respond(handle(payload), agent)
     except Exception:  # noqa: BLE001, S110 -- loop detection must never disturb the agent
         pass
     try:
