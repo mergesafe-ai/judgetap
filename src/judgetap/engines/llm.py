@@ -23,7 +23,7 @@ import math
 import string
 import time
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from typing import Any
 
 from judgetap.engine import Call, Context, RawAnswer, plain_context
@@ -236,14 +236,18 @@ class LLMEngine:
         futures = [
             pool.submit(self._one, litellm, q, context, record) for q in questions
         ]
-        try:
-            answers = [f.result() for f in futures]
-        except Exception as err:
+        # Watch completion order, not question order: a slow early question
+        # mustn't hide a later failure while workers keep sending the queue.
+        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+        failed = next((f for f in futures if f in done and f.exception()), None)
+        if failed is not None:
             # Stop what hasn't started; running requests can't be interrupted
             # but are waited for so their Call records are complete.
             pool.shutdown(wait=True, cancel_futures=True)
+            err = failed.exception()
             raise _LogprobsFailed(err, record) from err
         pool.shutdown(wait=True)
+        answers = [f.result() for f in futures]
         return self._with_calls(answers, record)
 
     async def _logprobs_async(

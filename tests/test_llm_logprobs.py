@@ -1,6 +1,7 @@
 import asyncio
 import math
 import sys
+import time
 import types
 
 import pytest
@@ -359,3 +360,30 @@ def test_async_first_failure_cancels_the_rest(fake):
         assert not any(c.ok for c in info.value.calls)
     finally:
         del sys.modules["litellm"]
+
+
+def test_later_failure_is_seen_while_an_earlier_question_is_slow(fake, monkeypatch):
+    import threading
+
+    import judgetap.engines.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "MAX_CONCURRENT", 2)
+    lock, first = threading.Lock(), []
+
+    def handler(m, kw):
+        with lock:
+            slow = not first
+            first.append(True)
+        if slow:
+            time.sleep(1.0)  # the early question is slow...
+            return lp_response([("A", 0.9), ("B", 0.1)])
+        raise RuntimeError("down")  # ...while a later one fails at once
+
+    lit = fake(handler)
+    with pytest.raises(RuntimeError):
+        jt.batch(
+            [jt.Question.yesno(str(i)) for i in range(8)],
+            engine=LLMEngine("openai/x", logprobs=True),
+        )
+    # Waiting in question order would let the second worker drain all 8.
+    assert len(lit.calls) <= 3

@@ -492,3 +492,32 @@ def test_named_unguarded_tool_is_still_a_non_action():
     assert hook.action_from_hook({"tool_name": "Grep"}) is None
     with pytest.raises(ValueError):
         hook.action_from_hook({})
+
+
+@pytest.mark.parametrize("name", ["Bash ", " Bash", "Bash\n"])
+def test_padded_tool_name_is_still_guarded(tmp_path, name):
+    out = run({**bash("git push --force", tmp_path), "tool_name": name})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("agent", ["claude-code", "cursor", "codex"])
+def test_unexpected_failure_after_read_asks_not_allows(tmp_path, monkeypatch, agent):
+    def boom(*a, **k):
+        raise RuntimeError("path resolution blew up")
+
+    monkeypatch.setattr(hook, "_decide", boom)
+    out, err = io.StringIO(), io.StringIO()
+    code = hook.run(
+        io.StringIO(json.dumps(bash("git push --force", tmp_path))),
+        out,
+        err,
+        agent=agent,
+    )
+    text = out.getvalue()
+    assert "allowed the action" not in text + err.getvalue()
+    if agent == "codex":
+        assert code == 2 and "Ask the user" in err.getvalue()
+    elif agent == "cursor":
+        assert json.loads(text)["permission"] == "ask"
+    else:
+        assert json.loads(text)["hookSpecificOutput"]["permissionDecision"] == "ask"

@@ -51,9 +51,11 @@ def action_from_hook(payload: dict[str, Any]) -> Action | None:
     non-action, allowed. A missing or empty tool name is not that -- the
     hook can't tell what is about to run -- so it raises, and the caller
     fails closed (asks)."""
-    tool = payload.get("tool_name")
-    if not isinstance(tool, str) or not tool.strip():
-        raise ValueError(f"hook input has no tool name: {tool!r}")
+    raw = payload.get("tool_name")
+    # Match on the stripped name: "Bash " is still Bash, not an unguarded tool.
+    tool = raw.strip() if isinstance(raw, str) else ""
+    if not tool:
+        raise ValueError(f"hook input has no tool name: {raw!r}")
     if tool not in GUARDED_TOOLS:
         return None
     inp = payload.get("tool_input")
@@ -304,8 +306,9 @@ def run(
     agent: str = "claude-code",
 ) -> int:
     """Hook entry point; returns the exit code. Input the guard can't read
-    asks the user (it never saw the action, so it can't vouch for it); any
-    later failure allows the action and says so."""
+    asks the user (it never saw the action, so it can't vouch for it), and so
+    does any later unexpected failure: the check didn't finish, so the guard
+    can't vouch for the action either."""
     start = time.perf_counter()
     code, err_text = 0, ""
     try:
@@ -336,13 +339,14 @@ def run(
                 except OSError:
                     pass
             out, code, err_text = respond(verdict, agent)
-    except Exception as err:  # noqa: BLE001 -- never break the agent, always say so
-        message = f"judgetap guard failed and allowed the action: {err}"
-        out = (
-            {"permission": "allow", "user_message": message}
-            if agent == "cursor"
-            else {"systemMessage": message}
+    except Exception as err:  # noqa: BLE001 -- never break the agent, fail closed
+        verdict = Verdict(
+            "ask",
+            "none",
+            "judgetap guard failed before finishing its check",
+            error=f"{type(err).__name__}: {err}",
         )
+        out, code, err_text = respond(verdict, agent)
     if out is not None:
         json.dump(out, stdout)
     if err_text:
