@@ -73,8 +73,35 @@ def test_run_logs_a_shadow_note_and_leaves_output_alone(tmp_path, capsys):
     assert r["label"] == "drop"
     assert r["output_chars"] == len(text) + 1  # stdout + "\n" + empty stderr
     assert r["est_tokens_saved"] == r["output_chars"] // 4
-    assert len(r["subject"]) <= 200 and "AKIAABCDEFGHIJKLMNOP" not in r["subject"]
-    assert PROGRESS[300:400] not in json.dumps(r)
+    # None of the output is logged: not a secret in it, not any excerpt.
+    assert "subject" not in r
+    assert "AKIA" not in json.dumps(r) and "Downloading" not in json.dumps(r)
+
+
+def test_loop_failure_still_observes(tmp_path, monkeypatch):
+    def boom(payload):
+        raise RuntimeError("loop broke")
+
+    monkeypatch.setattr(loop, "handle", boom)
+    assert loop.run(io.StringIO(json.dumps(_payload(PROGRESS))), io.StringIO()) == 0
+    assert _records(tmp_path)[0]["label"] == "drop"
+
+
+COVERAGE = "\n".join(f"src/mod{i}.py    120    4    97%" for i in range(60))
+NPM_ERR = "npm ERR! code ERESOLVE\n" + REPEAT
+FAILED = "Build failed with 3 errors\n" + REPEAT
+
+
+@pytest.mark.parametrize("text", [COVERAGE, NPM_ERR, FAILED])
+def test_reports_and_common_error_logs_are_kept(text):
+    assert prune.label(text, "Bash") == "keep"
+
+
+def test_huge_output_labels_a_bounded_prefix(tmp_path):
+    text = PROGRESS * 5000  # well past SCAN_CHARS
+    prune.observe(_payload(text))
+    (r,) = _records(tmp_path)
+    assert r["label"] == "drop" and r["output_chars"] > prune.SCAN_CHARS
 
 
 def test_small_outputs_are_not_logged(tmp_path):

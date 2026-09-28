@@ -3,7 +3,7 @@
 On Claude Code PostToolUse, a large tool output is labelled keep, summarize
 or drop by a few rules (no model), and the guard log records the tokens a
 summarize or drop *would* have saved. The output itself is never modified,
-suppressed or replaced, and never logged (a redacted excerpt at most). Real
+suppressed or replaced, and none of it is logged: only its size and label. Real
 pruning waits for the labelled set in #89.
 
 Tokens are estimated as characters / 4, not counted with a tokenizer.
@@ -19,18 +19,24 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from judgetap.guard.rules import redact
-
 DEFAULT_THRESHOLD = 2000  # chars; smaller outputs aren't considered
 SUMMARY_CHARS = 500  # what a summary is assumed to keep
-EXCERPT_CHARS = 200
+SCAN_CHARS = 200_000  # only this much of a huge output is labelled
 CHARS_PER_TOKEN = 4
 
 ERROR = re.compile(
-    r"Traceback \(most recent call last\)|\b(error|exception|fatal|panic)\b[:\]]",
+    r"Traceback \(most recent call last\)"
+    r"|\b(error|exception|fatal|panic|failed|failure|denied)\b"
+    r"|\bE\d{3,}\b|\bERR!",
     re.IGNORECASE,
 )
-PROGRESS = re.compile(r"\d{1,3}(\.\d+)?\s?%|[#=█▇▆▅▄▃▂▁-]{10,}|\r")
+# A progress line: a bar, or a percentage together with a bar or a counter
+# ("12/340"). A bare percentage (a coverage report, a test summary) isn't one.
+PROGRESS = re.compile(
+    r"[#=█▇▆▅▄▃▂▁]{10,}|\r"
+    r"|\d{1,3}(\.\d+)?\s?%.*(\d+/\d+|[#=█]{3,})"
+    r"|(\d+/\d+|[#=█]{3,}).*\d{1,3}(\.\d+)?\s?%"
+)
 PATHLIKE = re.compile(r"^\s*[\w./@~-]+\.\w+(:\d+)?(:|$)")
 
 
@@ -133,12 +139,12 @@ def observe(payload: dict[str, Any], failed: bool = False) -> None:
         text = output_text(payload)
         if len(text) <= threshold():
             return
-        verdict = label(text, record["tool"], failed)
+        # Label a bounded prefix: a huge output shouldn't balloon the hook.
+        verdict = label(text[:SCAN_CHARS], record["tool"], failed)
         record.update(
             label=verdict,
             output_chars=len(text),
             est_tokens_saved=tokens_saved(len(text), verdict),
-            subject=redact(text[:EXCERPT_CHARS])[:EXCERPT_CHARS],
             reason=f"shadow: {verdict} (estimated, pruning is off)",
         )
     except Exception as exc:  # noqa: BLE001 -- shadow mode must never disturb the agent

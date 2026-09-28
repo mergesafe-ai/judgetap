@@ -286,11 +286,18 @@ def run(stdin=sys.stdin, stdout=sys.stdout) -> int:
     """Hook entry point. Always exits 0 and stays silent on any error."""
     try:
         payload = json.load(stdin)
-        out = handle(payload)
-    except Exception:  # noqa: BLE001 -- loop detection must never disturb the agent
+    except Exception:  # noqa: BLE001 -- unreadable input: nothing to observe
         return 0
+    out = None
     try:
-        if payload.get("hook_event_name") in ("PostToolUse", None):
+        out = handle(payload)
+    except Exception:  # noqa: BLE001, S110 -- loop detection must never disturb the agent
+        pass
+    try:
+        if isinstance(payload, dict) and payload.get("hook_event_name") in (
+            "PostToolUse",
+            None,
+        ):
             from judgetap.guard.prune import observe
 
             observe(payload, failed=failure(payload) is not None)
