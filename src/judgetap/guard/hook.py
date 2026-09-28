@@ -45,8 +45,15 @@ def _text(value: Any) -> str:
 
 def action_from_hook(payload: dict[str, Any]) -> Action | None:
     """The action to check. Parsing never raises on odd field types; if the
-    extras (task, project rules) can't be read, the rules still run."""
+    extras (task, project rules) can't be read, the rules still run.
+
+    None means a named tool judgetap doesn't guard (Read, Grep, ...): a true
+    non-action, allowed. A missing or empty tool name is not that -- the
+    hook can't tell what is about to run -- so it raises, and the caller
+    fails closed (asks)."""
     tool = payload.get("tool_name")
+    if not isinstance(tool, str) or not tool.strip():
+        raise ValueError(f"hook input has no tool name: {tool!r}")
     if tool not in GUARDED_TOOLS:
         return None
     inp = payload.get("tool_input")

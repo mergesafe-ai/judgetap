@@ -471,3 +471,24 @@ def test_legacy_compat_surface(tmp_path, monkeypatch):
     monkeypatch.delenv("JUDGETAP_ENGINE", raising=False)
     monkeypatch.setenv("SNAPJUDGE_ENGINE", "agentjev")
     assert detect_engine(probe=lambda: False) == ("agentjev", "from $SNAPJUDGE_ENGINE")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tool_input": {"command": "rm -rf /"}},
+        {"tool_name": "", "tool_input": {"command": "rm -rf /"}},
+        {"tool_name": "   "},
+        {"tool_name": None},
+        {"tool_name": 7},
+    ],
+)
+def test_missing_tool_name_asks_instead_of_allowing(tmp_path, payload):
+    out = run({**payload, "cwd": str(tmp_path)})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_named_unguarded_tool_is_still_a_non_action():
+    assert hook.action_from_hook({"tool_name": "Grep"}) is None
+    with pytest.raises(ValueError):
+        hook.action_from_hook({})

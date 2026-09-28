@@ -178,7 +178,13 @@ class Cascade:
     def _confident(self, attempts: Sequence[Attempt], *, final: bool = False) -> bool:
         """Whether the latest answer stops the cascade. An uncalibrated p
         (calibrated=False) never stops it while another engine is left to
-        ask; once none is (final), it is judged on p like any other."""
+        ask; once none is (final), it is judged on p like any other.
+
+        This is deliberate for bare labels too (gliner's label-only answer,
+        p=1.0 but calibrated=False): a label says nothing about confidence,
+        so it escalates whenever a later engine exists, even if it is the
+        only signal the first engine gave. Put such an engine last in the
+        cascade (or use it alone) if its label should be accepted as is."""
         last = attempts[-1] if attempts else None
         return (
             last is not None

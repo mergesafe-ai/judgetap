@@ -3,7 +3,8 @@
 load("jev")                       -> TypeSafe Jev (TYPESAFE_API_KEY)
 load("jev:jev-1.13.0")            -> Jev pinned to a model version
 load("llm:openai/gpt-4o-mini")    -> any LiteLLM model (pip install judgetap[llm])
-    load("llm:openai/m?logprobs")     -> same, probabilities from token logprobs
+load("llm:openai/m?logprobs")     -> same, probabilities from token logprobs
+                                     (both modes answer calibrated=False)
 """
 
 from __future__ import annotations
@@ -43,6 +44,10 @@ def load(spec: str | None = None) -> Engine:
         from judgetap.engines.llm import LLMEngine
 
         model, _, flags = arg.partition("?")
+        if not model.strip():
+            raise JudgetapError(
+                f"llm engine needs a model before '?', e.g. llm:openai/gpt-4o-mini; got {spec!r}"
+            )
         if flags not in ("", "logprobs"):
             raise JudgetapError(f"unknown llm option {flags!r}; known: logprobs")
         return LLMEngine(model=model, logprobs=flags == "logprobs")

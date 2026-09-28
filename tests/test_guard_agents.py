@@ -142,3 +142,20 @@ def test_uninstall_leaves_edited_hook_commands(tmp_path):
     assert json.loads(path.read_text())["hooks"]["beforeShellExecution"] == [
         {"command": edited}
     ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not json",
+        "[]",
+        "{}",
+        '{"tool_name": "", "tool_input": {"cmd": "ls"}}',
+        '{"tool_name": "exec_command", "tool_input": {}}',
+        '{"tool_name": "exec_command", "tool_input": {"cmd": 5}}',
+    ],
+)
+def test_codex_unreadable_input_asks(raw):
+    out, err = io.StringIO(), io.StringIO()
+    code = hook.run(io.StringIO(raw), out, agent="codex", stderr=err)
+    assert code == 2 and "Ask the user" in err.getvalue()
